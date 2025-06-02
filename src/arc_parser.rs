@@ -1,17 +1,14 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::fs::File;
 use std::io::Error;
-use std::io::Read;
-use super::ByteVec;
-
-const HEADER_SIZE: u8 = 28;
+use super::ByteReader;
 
 #[derive(Debug, Clone)]
 pub struct ArcRecordHeader {
     pub record_type: u32,
     pub offset: u32,
-    pub len_compresssed: u32,
-    pub len_decompresssed: u32,
+    pub len_compressed: u32,
+    pub len_decompressed: u32,
     pub unknown: u32,
     pub filetime: u64,
     pub parts_count: u32,
@@ -20,14 +17,31 @@ pub struct ArcRecordHeader {
     pub str_offset: u32,
 }
 
+impl ArcRecordHeader {
+    fn new(byte_vec: &mut ByteReader) -> Self {
+        Self {
+            record_type: byte_vec.read_u32(),
+            offset: byte_vec.read_u32(),
+            len_compressed: byte_vec.read_u32(),
+            len_decompressed: byte_vec.read_u32(),
+            unknown: byte_vec.read_u32(),
+            filetime: byte_vec.read_u64(),
+            parts_count: byte_vec.read_u32(),
+            index: byte_vec.read_u32(),
+            str_len: byte_vec.read_u32(),
+            str_offset: byte_vec.read_u32(),
+        }
+    }
+}
+
 #[derive(Debug)]
-pub struct ArcRecord{
+pub struct DecompressedRecord{
     pub header: ArcRecordHeader,
     pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
-pub struct ArcHeader {
+pub struct ArcArchiveHeader {
     #[allow(dead_code)]
     pub unknown: u32,
     pub version: u32,
@@ -38,8 +52,8 @@ pub struct ArcHeader {
     pub record_offset: u32,
 }
 
-impl ArcHeader {
-    fn new(byte_vec: &mut ByteVec) -> Self {
+impl ArcArchiveHeader {
+    fn new(byte_vec: &mut ByteReader) -> Self {
         Self {
             unknown: byte_vec.read_u32(),
             version: byte_vec.read_u32(),
@@ -53,14 +67,14 @@ impl ArcHeader {
 }
 
 #[derive(Debug)]
-struct ArcFilePart {
+struct ArcRecordPartMetadata { // are these partial or whole records?
     pub offset: u32,
     pub len_compressed: u32,
     pub len_decompressed: u32,
 }
 
-impl ArcFilePart {
-    pub fn new(byte_vec: &mut ByteVec) -> Self {
+impl ArcRecordPartMetadata {
+    pub fn new(byte_vec: &mut ByteReader) -> Self {
         Self {
             offset: byte_vec.read_u32(),
             len_compressed: byte_vec.read_u32(),
@@ -70,94 +84,103 @@ impl ArcFilePart {
 }
 
 pub struct ArcParser {
-    pub data: Vec<Vec<u8>>,
+    //pub data: Vec<Vec<u8>>,
+    pub map: HashMap<String, String>
 }
 
 impl ArcParser {
-    pub fn parse_templates(path: &PathBuf) -> Result<Vec<ArcRecord>, Error> {
-        let mut byte_vec = ByteVec::new(path)?;
-        let header = ArcHeader::new(&mut byte_vec);
-        assert!(header.version == 3, "expected header version 3, is {}", header.version);
-        let mut file_parts: Vec<ArcFilePart> = Vec::with_capacity(header.records_count as usize);
-        byte_vec.index = header.record_offset as usize;
-
-        for _ in 0..header.records_count {
-            file_parts.push(ArcFilePart::new(&mut byte_vec));
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new()
         }
-
-        for part in &file_parts {
-            println!("part {:?}", part);
-        }
-
-        let _strings = Self::read_strings(&mut byte_vec, &header);
-        //for string in strings {
-        //    println!("{}", string);
-        //}
-        let record_headers = Self::read_record_headers(&mut byte_vec, &header);
-        //for record in records {
-        //    println!("{:?}", record);
-        //}
-        println!("records done");
-        let mut data: Vec<ArcRecord> = Vec::new();
-        assert_eq!(header.files_count as usize, record_headers.len());
-        for i in 0..header.files_count {
-            data.push(ArcRecord {
-                header: record_headers[i as usize].clone(),
-                data: Self::decompress(&mut byte_vec, &file_parts),
-            });
-        }
-        Ok(
-            data
-        )
     }
 
-    fn read_strings(byte_vec: &mut ByteVec, header: &ArcHeader) -> Vec<String> {
-        let mut strings = Vec::new();
-        byte_vec.index = (header.record_offset + header.record_len) as usize;
-        //byte_vec.read_string(header.string_table_len);
+    //pub fn new(path: &PathBuf) -> Result<Vec<DecompressedRecord>, Error> {
+    //pub fn add_archive(&mut self, path: &PathBuf) -> Result<Self, Error> {
+    pub fn add_archive(&mut self, path: &PathBuf) -> Result<(), Error> {
+        let mut byte_vec = ByteReader::from_file(path)?;
+        let archive_header = ArcArchiveHeader::new(&mut byte_vec);
+        assert!(archive_header.version == 3, "expected header version 3, is {}", archive_header.version);
 
-        for i in 0..header.files_count {
-            let string = byte_vec.read_cstring();
+        let record_headers = read_record_headers(&mut byte_vec, &archive_header);
+        let record_parts_metadata = read_record_metadata(&mut byte_vec, &archive_header);
+
+        let strings = read_strings(&mut byte_vec, &archive_header);
+        let mut items_index = None;
+        for (i, string) in strings.iter().enumerate() {
             //println!("{string}");
-            strings.push(string);
-        }
-        println!("strings done");
-        strings
-    }
-
-    fn read_record_headers(byte_vec: &mut ByteVec, header: &ArcHeader) -> Vec<ArcRecordHeader> {
-        let mut records = Vec::new();
-        byte_vec.index = (header.record_offset + header.record_len + header.string_table_len) as usize;
-        for _ in 0..header.files_count {
-            records.push(ArcRecordHeader {
-                record_type: byte_vec.read_u32(),
-                offset: byte_vec.read_u32(),
-                len_compresssed: byte_vec.read_u32(),
-                len_decompresssed: byte_vec.read_u32(),
-                unknown: byte_vec.read_u32(),
-                filetime: byte_vec.read_u64(),
-                parts_count: byte_vec.read_u32(),
-                index: byte_vec.read_u32(),
-                str_len: byte_vec.read_u32(),
-                str_offset: byte_vec.read_u32(),
-            });
-        }
-        records
-    }
-
-    fn decompress(byte_vec: &mut ByteVec, parts: &Vec<ArcFilePart>) -> Vec<u8> {
-        let mut data: Vec<u8> = Vec::new();
-        for part in parts {
-            byte_vec.index = part.offset as usize;
-            if part.len_compressed == part.len_decompressed {
-                data.append(&mut byte_vec.read_n_bytes(part.len_compressed).to_vec());
-            } else {
-                let mut buf = vec![0; part.len_decompressed as usize];
-                let compressed_data = &*byte_vec.read_n_bytes(part.len_compressed);
-                lz4::block::decompress_to_buffer(compressed_data, Some(part.len_decompressed.try_into().unwrap()), &mut buf).unwrap();
-                data.append(&mut buf.to_vec());
+            if string == "tags_items.txt" || string == "tagsgdx1_items.txt" || string == "tagsgdx2_items.txt" {
+                //println!("index is {}", i);
+                items_index = Some(i);
+                break;
             }
         }
-        data
+        //let mut ret: Vec<DecompressedRecord> = Vec::new();
+        assert_eq!(archive_header.files_count as usize, record_headers.len());
+        // TODO loop over record headers instead..?
+        //for _ in 0..archive_header.files_count {
+        //    //for record_metadata in &record_parts_metadata {
+        //    //    //data.push(DecompressedRecord {
+        //    //    //    header: record_headers[i as usize].clone(),
+        //    //    //    data: decompress(&mut byte_vec, datum),
+        //    //    //});
+        //    //    data.push(decompress(&mut byte_vec, &record_metadata));
+        //    //}
+        //    data.push(decompress(&mut byte_vec, &record_parts_metadata[3]));
+        //}
+        //let mut map = HashMap::new();
+        let data = decompress(&mut byte_vec, &record_parts_metadata[items_index.unwrap()]);
+        for string in String::from_utf8(data).unwrap().lines() {
+            if string.is_empty() || string.starts_with("#") {
+                continue
+            }
+            let (key, value) = string.split_once('=').unwrap();
+            self.map.insert(key.to_string(), value.to_string());
+        }
+        Ok(())
     }
 }
+
+fn read_record_metadata(byte_vec: &mut ByteReader, header: &ArcArchiveHeader) -> Vec<ArcRecordPartMetadata> {
+        let mut record_metadatas: Vec<ArcRecordPartMetadata> = Vec::with_capacity(header.records_count as usize);
+        byte_vec.index = header.record_offset as usize;
+        for _ in 0..header.records_count {
+            record_metadatas.push(ArcRecordPartMetadata::new(byte_vec));
+        }
+        record_metadatas
+}
+
+fn read_strings(byte_vec: &mut ByteReader, header: &ArcArchiveHeader) -> Vec<String> {
+    let mut strings = Vec::new();
+    byte_vec.index = (header.record_offset + header.record_len) as usize;
+
+    for _ in 0..header.files_count {
+        let string = byte_vec.read_null_string().unwrap();
+        strings.push(string);
+    }
+    strings
+}
+
+fn read_record_headers(byte_vec: &mut ByteReader, header: &ArcArchiveHeader) -> Vec<ArcRecordHeader> {
+    let mut records = Vec::new();
+    byte_vec.index = (header.record_offset + header.record_len + header.string_table_len) as usize;
+    for _ in 0..header.files_count {
+        records.push(ArcRecordHeader::new(byte_vec));
+    }
+    records
+}
+
+fn decompress(byte_vec: &mut ByteReader, metadata: &ArcRecordPartMetadata) -> Vec<u8> {
+    let mut data: Vec<u8> = Vec::new();
+    byte_vec.index = metadata.offset as usize;
+    if metadata.len_compressed == metadata.len_decompressed {
+        data.append(&mut byte_vec.read_n_bytes(metadata.len_compressed).to_vec());
+    } else {
+        let mut buf = vec![0; metadata.len_decompressed as usize];
+        let compressed_data = &*byte_vec.read_n_bytes(metadata.len_compressed);
+        lz4::block::decompress_to_buffer(compressed_data, Some(metadata.len_decompressed.try_into().unwrap()), &mut buf).unwrap();
+        data.append(&mut buf.to_vec());
+    }
+    data
+}
+

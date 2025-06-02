@@ -1,20 +1,28 @@
 use std::io::Error;
-use std::fs::File;
 use std::io::Read;
+use std::fs::File;
 use std::path::PathBuf;
-use std::ffi::CString;
 
-pub struct ByteVec {
+pub struct ByteReader {
     pub bytes: Vec<u8>,
     pub index: usize,
 }
 
-impl ByteVec {
-    pub fn new(path: &PathBuf) -> Result<Self, Error> {
+impl ByteReader {
+    pub fn from_file(path: &PathBuf) -> Result<Self, Error> {
         let mut file = File::open(path)?;
         let mut bytes = Vec::new();
         let _len = file.read_to_end(&mut bytes)?;
         Ok(Self { bytes, index: 0 })
+    }
+
+    /* Creating a vec for this seems wasteful, but I don't want to figure out how to deal with the lifetime issues of a
+     * &[u8] */
+    pub fn from_slice(bytes: &[u8]) -> Self {
+        Self {
+            bytes: bytes.to_vec(),
+            index: 0
+        }
     }
 
     pub fn read_byte(&mut self) -> u8 {
@@ -39,6 +47,16 @@ impl ByteVec {
         ret
     }
 
+    pub fn read_f32(&mut self) -> f32 {
+        let new_index = self.index + 4;
+        let ret =
+            f32::from_ne_bytes(<[u8; 4]>::try_from(&self.bytes[self.index..new_index]).unwrap());
+        self.index = new_index;
+        ret
+    }
+
+
+
     pub fn read_u64(&mut self) -> u64 {
         let new_index = self.index + 8;
         let ret =
@@ -46,7 +64,6 @@ impl ByteVec {
         self.index = new_index;
         ret
     }
-
 
     pub fn read_n_bytes(&mut self, n: u32) -> &mut [u8] {
         let n = n as usize;
@@ -59,17 +76,18 @@ impl ByteVec {
         str::from_utf8(self.read_n_bytes(len)).unwrap().to_string()
     }
 
-    pub fn read_cstring(&mut self) -> String {
+    pub fn read_null_string(&mut self) -> Option<String> {
+        if self.index >= self.bytes.len() {
+            return None
+        }
         let mut buf = Vec::new();
-        loop {
+        while self.index < self.bytes.len() {
             let byte = self.read_byte();
             if byte == 0 {
                 break;
             }
             buf.push(byte);
         }
-        String::from_utf8_lossy(&buf).to_string()
+        Some(String::from_utf8_lossy(&buf).to_string())
     }
 }
-
-

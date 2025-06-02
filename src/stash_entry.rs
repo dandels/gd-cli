@@ -1,8 +1,8 @@
-use super::Decrypt;
+use super::stash::Decrypt;
 
-#[repr(C)]
 #[derive(Debug)]
-pub struct GDItem {
+#[allow(dead_code)]
+pub struct StashEntry {
     pub base_name: String,
     pub prefix_name: String,
     pub suffix_name: String,
@@ -21,7 +21,7 @@ pub struct GDItem {
     pub y_offset: u32,
 }
 
-impl GDItem {
+impl StashEntry {
     pub fn read(decrypter: &mut Decrypt) -> Result<Self, std::io::Error> {
         Ok(Self {
             base_name: decrypter.read_str()?,

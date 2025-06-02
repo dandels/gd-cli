@@ -1,8 +1,10 @@
-use crate::byte_vec::ByteVec;
-use crate::item::GDItem;
+use crate::byte_reader::ByteReader;
+use crate::stash_entry::StashEntry;
 
+use std::fs::File;
 use std::io::Error;
 use std::path::PathBuf;
+use std::io::Read;
 
 const PRIME: u32 = 39916801;
 
@@ -12,15 +14,18 @@ struct Block {
     end: u32,
 }
 
-struct Decrypt {
-    byte_vec: ByteVec,
+pub struct Decrypt {
+    slice_reader: ByteReader,
     table: [u32; 256],
     key: u32,
 }
 
 impl Decrypt {
     pub fn new(path: &PathBuf) -> Result<Self, Error> {
-        let mut byte_vec = ByteVec::new(path)?;
+        let mut file = File::open(path)?;
+        let mut bytes = Vec::new();
+        let _len = file.read_to_end(&mut bytes)?;
+        let mut byte_vec = ByteReader::from_slice(&bytes);
         let key = byte_vec.read_u32() ^ 0x55555555;
         let mut k = key;
         let mut table = [0; 256];
@@ -30,14 +35,14 @@ impl Decrypt {
         }
 
         Ok(Self {
-            byte_vec,
+            slice_reader: byte_vec,
             table,
             key,
         })
     }
 
-    fn read_int(&mut self) -> u32 {
-        let num = self.byte_vec.read_u32();
+    pub fn read_int(&mut self) -> u32 {
+        let num = self.slice_reader.read_u32();
         let ret = num ^ self.key;
         for byte in num.to_be_bytes() {
             self.key ^= self.table[byte as usize];
@@ -46,7 +51,7 @@ impl Decrypt {
     }
 
     fn next_int(&mut self) -> u32 {
-        self.byte_vec.read_u32() ^ self.key
+        self.slice_reader.read_u32() ^ self.key
     }
 
     #[allow(dead_code)]
@@ -55,7 +60,7 @@ impl Decrypt {
     }
 
     fn read_byte(&mut self) -> u8 {
-        let byte = self.byte_vec.read_byte();
+        let byte = self.slice_reader.read_byte();
         self.key ^= self.table[byte as usize];
         byte ^ (self.key as u8)
     }
@@ -64,10 +69,10 @@ impl Decrypt {
         self.read_byte() != 0
     }
 
-    fn read_str(&mut self) -> Result<String, Error> {
+    pub fn read_str(&mut self) -> Result<String, Error> {
         let len = self.read_int();
         if len > 0 {
-            let str_buf = self.byte_vec.read_n_bytes(len);
+            let str_buf = self.slice_reader.read_n_bytes(len);
             for i in 0..len {
                 let byte = (str_buf[i as usize] as u32 ^ self.key) as u8;
                 self.key ^= self.table[str_buf[i as usize] as usize];
@@ -83,13 +88,13 @@ impl Decrypt {
     fn read_block_start(&mut self) -> (u32, Block) {
         let block_start = self.read_int();
         let len = self.next_int();
-        let index: u32 = self.byte_vec.index.try_into().unwrap();
+        let index: u32 = self.slice_reader.index.try_into().unwrap();
         let end = index + len;
         (block_start, Block { len, end })
     }
 
     fn read_block_end(&mut self, block: &Block) -> Result<bool, ()> {
-        let stream_pos: u32 = self.byte_vec.index.try_into().unwrap();
+        let stream_pos: u32 = self.slice_reader.index.try_into().unwrap();
         if block.end != stream_pos {
             println!(
                 "Stream position is {stream_pos} but block end is {}. Delta: {}",
@@ -106,19 +111,16 @@ impl Decrypt {
     }
 }
 
-struct Stash {
-    #[allow(dead_code)]
-    tabs: Vec<Vec<GDItem>>,
+pub struct Stash {
+    pub tabs: Vec<Vec<StashEntry>>,
 }
 
 impl Stash {
     #[allow(dead_code)]
-    fn new(path: &PathBuf) -> Result<Self, Error> {
+    pub fn new(path: &PathBuf) -> Result<Self, Error> {
         let mut decrypt = Decrypt::new(path)?;
         let val = decrypt.read_int();
         assert_eq!(val, 2);
-        println!("key {}", decrypt.key);
-
         let (block_pos, block) = decrypt.read_block_start();
         assert_eq!(block_pos, 18);
         let stash_version = decrypt.read_int();
@@ -143,7 +145,7 @@ impl Stash {
             let item_count = decrypt.read_int();
 
             for _ in 0..item_count {
-                let item = GDItem::read(&mut decrypt)?;
+                let item = StashEntry::read(&mut decrypt)?;
                 items.push(item);
             }
             tabs.push(items);
