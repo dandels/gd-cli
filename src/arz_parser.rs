@@ -76,7 +76,6 @@ impl EntryHeader {
 
 #[derive(Debug)]
 pub struct ArzParser {
-    //pub records: Vec<ArzRecord>
     pub items: HashMap<String, EntryType>,
     pub affixes: HashMap<String, EntryType>
 }
@@ -94,7 +93,7 @@ impl ArzParser {
 
         let archive_header = ArzArchiveHeader::new(&mut reader);
 
-        // Asserts copied from IA example
+        // Asserts copied from Item Assistant example
         assert_eq!(archive_header.unknown, 2);
         assert_eq!(archive_header.version, 3);
 
@@ -103,13 +102,14 @@ impl ArzParser {
 
         for record_header in &record_headers {
             if
+                // note for debugging: record_type.is_empty() also yields values
                 record_header.record_type.starts_with("Armor") 
                     || record_header.record_type.starts_with("Item") 
                     || record_header.record_type.starts_with("Weapon") 
-                    || record_header.record_type == "LootRandomizer" 
-                  //|| record_header.record_type.is_empty()
+                    /* Matches at least LootRandomizer and LootRandomizerTable */
+                    || record_header.record_type == "LootRandomizer"
             {
-                if record_header.record_type.starts_with("Item") {
+                if record_header.record_type.starts_with("Item") { // This matches multiple types
                     //println!("{}", record_header.record_type);
                     continue;
                 }
@@ -147,7 +147,7 @@ enum EntryValue {
 
 #[derive(Debug)]
 pub enum EntryType {
-    Affix(AffixInfo), // String is record name
+    Affix(AffixInfo),
     Item(String, String), // record name, tag name
 }
 
@@ -155,14 +155,12 @@ pub enum EntryType {
 pub struct AffixInfo {
     pub tag_name: Option<String>,
     #[allow(dead_code)]
-    pub rarity: String,
+    pub rarity: String, // the affixes could be printed in color
     pub name: Option<String>
 }
 
 fn parse_record(record: &ArzRecord, record_name: &str, strings: &[String], is_affix: bool) -> EntryType {
     let mut reader = ByteReader::from_slice(&record.data);
-
-    //let mut record_entry = RecordEntry::new(record_name.clone());
 
     let mut vals: Vec<(String, EntryValue)> = Vec::new();
     let mut tag_name: Option<String> = None;
@@ -217,16 +215,17 @@ fn parse_record(record: &ArzRecord, record_name: &str, strings: &[String], is_af
         if let Some(name) = tag_name {
             EntryType::Item(record_name.to_string(), name.clone())
         } else {
-            panic!("wtf");
+            // Not sure if this is an acceptable state of the db, but TODO proper error handling
+            panic!("Tag Name should not be None.");
         }
     }
 }
 
 fn decompress(byte_vec: &mut ByteReader, header: &ArzRecordHeader) -> Vec<u8> {
     byte_vec.index = header.offset as usize + 24;
-    //let compressed_data = &*byte_vec.read_n_bytes(header.size_compressed);
     let end = byte_vec.index + header.size_compressed as usize;
-    lz4::block::decompress(&byte_vec.bytes[byte_vec.index..end], Some(header.size_decompressed.try_into().unwrap())).unwrap()
+    let slice = &byte_vec.bytes[byte_vec.index..end];
+    lz4::block::decompress(slice, Some(header.size_decompressed.try_into().unwrap())).unwrap()
 }
 
 fn read_record_headers(byte_vec: &mut ByteReader, header: &ArzArchiveHeader) -> Vec<ArzRecordHeader> {
