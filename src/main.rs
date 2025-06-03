@@ -1,18 +1,75 @@
 mod arc_parser;
 mod arz_parser;
 mod byte_reader;
+mod decrypt;
+mod player;
 mod stash;
-mod stash_entry;
+mod inventory_item;
 
 use arc_parser::ArcParser;
 use arz_parser::*;
 use byte_reader::ByteReader;
+use player::CharacterItems;
 use stash::Stash;
+use inventory_item::InventoryItem;
 
 use std::io::Error;
 use std::path::PathBuf;
 
+struct ItemLookup {
+    localization_data: ArcParser,
+    tag_names: ArzParser,
+}
+
+struct CompleteItem {
+    name: String,
+    prefix: Option<String>,
+    suffix: Option<String>,
+}
+
+impl ItemLookup {
+    fn lookup_item(&self, inventory_item: &InventoryItem) -> Option<CompleteItem> {
+        if let Some(EntryType::Item(_record_name, tag_name)) = self.tag_names.items.get(&inventory_item.base_name) {
+            if let Some(name) = self.localization_data.map.get(tag_name) {
+                let mut prefix = None;
+                if !inventory_item.prefix_name.is_empty() {
+                    let tag_prefix = self.tag_names.affixes.get(&inventory_item.prefix_name);
+                    if let Some(EntryType::Affix(_, affix_info)) = tag_prefix {
+                        if let Some(name) = &affix_info.name {
+                            prefix = Some(name.clone());
+                        } else if let Some(tag_name) = &affix_info.tag_name {
+                            if let Some(name) = self.localization_data.map.get(tag_name) {
+                                prefix = Some(name.clone());
+                            }
+                        }
+                    }
+                }
+                let mut suffix = None;
+                if !inventory_item.suffix_name.is_empty() {
+                    let tag_suffix = self.tag_names.affixes.get(&inventory_item.suffix_name);
+                    if let Some(EntryType::Affix(_, affix_info)) = tag_suffix {
+                        if let Some(name) = &affix_info.name {
+                            suffix = Some(name.clone());
+                        } else if let Some(tag_name) = &affix_info.tag_name {
+                            if let Some(name) = self.localization_data.map.get(tag_name) {
+                                suffix = Some(name.clone());
+                            }
+                        }
+                    }
+                }
+                Some(CompleteItem { name: name.clone(), prefix, suffix })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
 fn main() -> Result<(), Error> {
+    let save_path = std::path::PathBuf::from("/home/dee/src/rust/gd-cli/player.gdc");
+    let char_items = CharacterItems::read(&save_path)?;
     let stash_path = std::path::PathBuf::from("/home/dee/src/rust/gd-cli/transfer.gst");
     let stash = Stash::new(&stash_path)?;
     //println!("{:?}", stash.tabs);
@@ -30,11 +87,6 @@ fn main() -> Result<(), Error> {
         let path = PathBuf::from(file);
         tag_names.add_archive(&path)?;
     }
-    //let hand_tag = tags
-    //    .tags
-    //    .get("records/items/gearhands/d010_hands.dbr")
-    //    .unwrap();
-    //println!("{hand_tag}");
 
     let localization_files = [
         "/home/dee/games/Grim Dawn/resources/Text_EN.arc",
@@ -42,65 +94,43 @@ fn main() -> Result<(), Error> {
         "/home/dee/games/Grim Dawn/gdx2/resources/Text_EN.arc",
     ];
 
-    let mut en_data = ArcParser::new();
+    let mut localization_data = ArcParser::new();
     for file in localization_files {
         let path = PathBuf::from(file);
-        en_data.add_archive(&path)?;
+        localization_data.add_archive(&path)?;
     }
-    //let hands = en_data.map.get(hand_tag).unwrap();
-    //println!("{hands}");
 
-    //for record in db.records {
-    //    let string = String::from_utf8_lossy(&record.data);
-    //    println!("{string}");
-    //}
+    let lookup = ItemLookup { localization_data, tag_names };
+
     for (tab_index, tab) in stash.tabs.iter().enumerate() {
-        for stash_entry in tab {
-            if let Some(EntryType::Item(_record_name, tag_name)) =
-                tag_names.items.get(&stash_entry.base_name)
-            {
-                if let Some(name) = en_data.map.get(tag_name) {
-                    let mut prefix: &String = &"".to_string();
-                    if !stash_entry.prefix_name.is_empty() {
-                        let tag_prefix = tag_names.affixes.get(&stash_entry.prefix_name);
-                        if let Some(EntryType::Affix(_, affix_info)) = tag_prefix {
-                            if let Some(name) = &affix_info.name {
-                                prefix = name;
-                            } else if let Some(tag_name) = &affix_info.tag_name {
-                                if let Some(name) = en_data.map.get(tag_name) {
-                                    prefix = name;
-                                    //println!("we have a prefix! {name}");
-                                }
-                            }
-                        }
-                    }
-                    let mut suffix: &String = &"".to_string();
-                    if !stash_entry.suffix_name.is_empty() {
-                        let tag_suffix = tag_names.affixes.get(&stash_entry.suffix_name);
-                        if let Some(EntryType::Affix(_, affix_info)) = tag_suffix {
-                            if let Some(name) = &affix_info.name {
-                                suffix = name;
-                            } else if let Some(tag_name) = &affix_info.tag_name {
-                                if let Some(name) = en_data.map.get(tag_name) {
-                                    suffix = name;
-                                    //println!("we have a prefix! {name}");
-                                }
-                            }
-                        }
-                    }
-                    //let name = en_data.map.get(tag_name).unwrap();
-                    //println!("found tag {}", tag_name);
-                    let tab_nr = tab_index + 1;
-                    if prefix.is_empty() {
-                        println!("Tab {tab_nr}: {name} {suffix}");
-                    } else {
-                        println!("Tab {tab_nr}: {prefix} {name} {suffix}");
-                    }
+        for inventory_item in tab {
+            if let Some(ci) = lookup.lookup_item(inventory_item) {
+                let tab_nr = tab_index + 1;
+                if ci.prefix.is_none() {
+                    println!("Shared stash tab {tab_nr}: {} {}", ci.name, ci.suffix.unwrap_or_default());
                 } else {
-                    println!("no name for {}", tag_name);
+                    println!("Shared stash tab {tab_nr}: {} {} {}", ci.prefix.unwrap(), ci.name, ci.suffix.unwrap_or_default());
                 }
+            } else {
+                println!("No tag found for {}", inventory_item.base_name);
             }
         }
     }
+
+    for (i, bag) in char_items.inventory.bags.iter().enumerate() {
+        for inventory_item in &bag.items {
+            if let Some(ci) = lookup.lookup_item(inventory_item) {
+                let char_name = &char_items.name;
+                if ci.prefix.is_none() {
+                    println!("{char_name} bag {i}: {} {}", ci.name, ci.suffix.unwrap_or_default());
+                } else {
+                    println!("{char_name} bag {i}: {} {} {}", ci.prefix.unwrap(), ci.name, ci.suffix.unwrap_or_default());
+                }
+            } else {
+                println!("No tag found for {}", inventory_item.base_name);
+            }
+        }
+    }
+
     Ok(())
 }

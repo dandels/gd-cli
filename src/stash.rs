@@ -1,118 +1,28 @@
-use crate::byte_reader::ByteReader;
-use crate::stash_entry::StashEntry;
-
-use std::fs::File;
+use super::inventory_item::InventoryItem;
+use super::decrypt::Decrypt;
 use std::io::Error;
 use std::path::PathBuf;
-use std::io::Read;
 
-const PRIME: u32 = 39916801;
-
-struct Block {
+pub struct StashItem {
+    pub item: InventoryItem,
     #[allow(dead_code)]
-    len: u32,
-    end: u32,
+    x_offset: u32,
+    #[allow(dead_code)]
+    y_offset: u32,
 }
 
-pub struct Decrypt {
-    slice_reader: ByteReader,
-    table: [u32; 256],
-    key: u32,
-}
-
-impl Decrypt {
-    pub fn new(path: &PathBuf) -> Result<Self, Error> {
-        let mut file = File::open(path)?;
-        let mut bytes = Vec::new();
-        let _len = file.read_to_end(&mut bytes)?;
-        let mut byte_vec = ByteReader::from_slice(&bytes);
-        let key = byte_vec.read_u32() ^ 0x55555555;
-        let mut k = key;
-        let mut table = [0; 256];
-        for i in &mut table {
-            k = k.rotate_right(1).wrapping_mul(PRIME);
-            *i = k;
-        }
-
+impl StashItem {
+    pub fn read(decrypt: &mut Decrypt) -> Result<Self, Error> {
         Ok(Self {
-            slice_reader: byte_vec,
-            table,
-            key,
+            item: InventoryItem::read(decrypt)?,
+            x_offset: decrypt.read_int(),
+            y_offset: decrypt.read_int(),
         })
-    }
-
-    pub fn read_int(&mut self) -> u32 {
-        let num = self.slice_reader.read_u32();
-        let ret = num ^ self.key;
-        for byte in num.to_be_bytes() {
-            self.key ^= self.table[byte as usize];
-        }
-        ret
-    }
-
-    fn next_int(&mut self) -> u32 {
-        self.slice_reader.read_u32() ^ self.key
-    }
-
-    #[allow(dead_code)]
-    fn next_float(&mut self) -> f32 {
-        self.next_int() as f32
-    }
-
-    fn read_byte(&mut self) -> u8 {
-        let byte = self.slice_reader.read_byte();
-        self.key ^= self.table[byte as usize];
-        byte ^ (self.key as u8)
-    }
-
-    fn read_bool(&mut self) -> bool {
-        self.read_byte() != 0
-    }
-
-    pub fn read_str(&mut self) -> Result<String, Error> {
-        let len = self.read_int();
-        if len > 0 {
-            let str_buf = self.slice_reader.read_n_bytes(len);
-            for i in 0..len {
-                let byte = (str_buf[i as usize] as u32 ^ self.key) as u8;
-                self.key ^= self.table[str_buf[i as usize] as usize];
-                str_buf[i as usize] = byte;
-            }
-            // TODO error handling for invalid strings
-            let ret_str = str::from_utf8(str_buf).unwrap().to_string();
-            return Ok(ret_str);
-        }
-        Ok("".to_string())
-    }
-
-    fn read_block_start(&mut self) -> (u32, Block) {
-        let block_start = self.read_int();
-        let len = self.next_int();
-        let index: u32 = self.slice_reader.index.try_into().unwrap();
-        let end = index + len;
-        (block_start, Block { len, end })
-    }
-
-    fn read_block_end(&mut self, block: &Block) -> Result<bool, ()> {
-        let stream_pos: u32 = self.slice_reader.index.try_into().unwrap();
-        if block.end != stream_pos {
-            println!(
-                "Stream position is {stream_pos} but block end is {}. Delta: {}",
-                block.end,
-                stream_pos.abs_diff(block.end)
-            );
-            Err(())
-        } else if self.next_int() != 0 {
-            println!("Expected end of block character 0.");
-            Ok(false)
-        } else {
-            Ok(true)
-        }
     }
 }
 
 pub struct Stash {
-    pub tabs: Vec<Vec<StashEntry>>,
+    pub tabs: Vec<Vec<InventoryItem>>,
 }
 
 impl Stash {
@@ -145,8 +55,8 @@ impl Stash {
             let item_count = decrypt.read_int();
 
             for _ in 0..item_count {
-                let item = StashEntry::read(&mut decrypt)?;
-                items.push(item);
+                let item = StashItem::read(&mut decrypt)?;
+                items.push(item.item);
             }
             tabs.push(items);
             decrypt.read_block_end(&block).unwrap();

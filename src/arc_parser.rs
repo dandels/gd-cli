@@ -18,7 +18,7 @@ pub struct ArcRecordHeader {
 }
 
 impl ArcRecordHeader {
-    fn new(byte_vec: &mut ByteReader) -> Self {
+    pub fn new(byte_vec: &mut ByteReader) -> Self {
         Self {
             record_type: byte_vec.read_u32(),
             offset: byte_vec.read_u32(),
@@ -95,8 +95,6 @@ impl ArcParser {
         }
     }
 
-    //pub fn new(path: &PathBuf) -> Result<Vec<DecompressedRecord>, Error> {
-    //pub fn add_archive(&mut self, path: &PathBuf) -> Result<Self, Error> {
     pub fn add_archive(&mut self, path: &PathBuf) -> Result<(), Error> {
         let mut byte_vec = ByteReader::from_file(path)?;
         let archive_header = ArcArchiveHeader::new(&mut byte_vec);
@@ -115,20 +113,7 @@ impl ArcParser {
                 break;
             }
         }
-        //let mut ret: Vec<DecompressedRecord> = Vec::new();
         assert_eq!(archive_header.files_count as usize, record_headers.len());
-        // TODO loop over record headers instead..?
-        //for _ in 0..archive_header.files_count {
-        //    //for record_metadata in &record_parts_metadata {
-        //    //    //data.push(DecompressedRecord {
-        //    //    //    header: record_headers[i as usize].clone(),
-        //    //    //    data: decompress(&mut byte_vec, datum),
-        //    //    //});
-        //    //    data.push(decompress(&mut byte_vec, &record_metadata));
-        //    //}
-        //    data.push(decompress(&mut byte_vec, &record_parts_metadata[3]));
-        //}
-        //let mut map = HashMap::new();
         let data = decompress(&mut byte_vec, &record_parts_metadata[items_index.unwrap()]);
         for string in String::from_utf8(data).unwrap().lines() {
             if string.is_empty() || string.starts_with("#") {
