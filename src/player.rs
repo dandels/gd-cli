@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 const EQUIPMENT_SLOTS: usize = 12;
 
-// I don't know what half of these are
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Inventory {
     num_bags: u32,
     pub bags: Vec<Bag>,
@@ -27,30 +27,30 @@ pub struct Inventory {
 #[derive(Debug)]
 pub struct InventoryEquipment {
     pub item: InventoryItem,
+    #[allow(dead_code)]
     attached: u8,
 }
 
 impl InventoryEquipment {
-    fn read(decrypt: &mut Decrypt) -> Self { 
+    fn read(decrypt: &mut Decrypt) -> Self {
         Self {
             item: InventoryItem::read(decrypt).unwrap(),
-            attached: decrypt.read_byte()
+            attached: decrypt.read_byte(),
         }
     }
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Bag {
     some_bool: u8,
     pub items: Vec<InventoryItem>,
 }
 
 impl Bag {
-    fn read(decrypt: &mut Decrypt) -> Self { 
+    fn read(decrypt: &mut Decrypt) -> Self {
         let (start, block) = decrypt.read_block_start();
-        println!("bag block start is {start}");
-        println!("block end is {}", block.end);
-        //assert!(start == 0, "expected non-zero start of bag block");
+        assert!(start == 0, "expected non-zero start of bag block");
         let ret = Self {
             some_bool: decrypt.read_byte(),
             items: {
@@ -60,7 +60,7 @@ impl Bag {
                     ret.push(StashItem::read(decrypt).unwrap().item);
                 }
                 ret
-            }
+            },
         };
         decrypt.read_block_end(&block).unwrap();
         ret
@@ -68,7 +68,7 @@ impl Bag {
 }
 
 impl Inventory {
-    fn read(decrypt: &mut Decrypt) -> Self { 
+    fn read(decrypt: &mut Decrypt) -> Self {
         let (start, block) = decrypt.read_block_start();
         assert_eq!(start, 3);
         assert_eq!(decrypt.read_int(), 4);
@@ -79,16 +79,12 @@ impl Inventory {
         let num_bags = decrypt.read_int();
         let focused = decrypt.read_int();
         let selected = decrypt.read_int();
-        println!("{num_bags} {focused} {selected}");
         let mut bags = Vec::with_capacity(num_bags as usize);
         for _ in 0..num_bags {
             bags.push(Bag::read(decrypt));
         }
-        println!("bags done");
         let use_alternate = decrypt.read_byte();
-        println!("use_alternate {use_alternate}");
         let equipment = std::array::from_fn(|_| InventoryEquipment::read(decrypt));
-        //println!("equipment is {:?}", equipment);
         let alternate_1 = decrypt.read_byte();
         let weapon_set_1 = std::array::from_fn(|_| InventoryEquipment::read(decrypt));
         let alternate_2 = decrypt.read_byte();
@@ -181,7 +177,7 @@ impl CharacterInfo {
                     *byte = decrypt.read_byte();
                 }
                 buf
-            }
+            },
         };
         decrypt.read_block_end(&block).unwrap();
         ret

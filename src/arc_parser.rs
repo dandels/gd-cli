@@ -4,6 +4,7 @@ use std::io::Error;
 use super::ByteReader;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ArcRecordHeader {
     pub record_type: u32,
     pub offset: u32,
@@ -32,12 +33,6 @@ impl ArcRecordHeader {
             str_offset: byte_vec.read_u32(),
         }
     }
-}
-
-#[derive(Debug)]
-pub struct DecompressedRecord{
-    pub header: ArcRecordHeader,
-    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]

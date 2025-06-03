@@ -36,6 +36,7 @@ struct ArzArchiveHeader {
     unknown: u16, // Item Assistant code thinks this is the version check?
     version: u16,
     records_start: u32,
+    #[allow(dead_code)]
     records_len: u32,
     records_count: u32,
     strings_start: u32,
@@ -136,24 +137,8 @@ impl ArzParser {
     }
 }
 
-#[derive(Debug)]
-struct RecordEntry {
-    record_name: String,
-    tag_name: Option<String>,
-    values: Vec<EntryValue>
-}
-
-impl RecordEntry {
-    fn new(record_name: String) -> Self {
-        Self {
-            record_name,
-            tag_name: None,
-            values: Vec::new()
-        }
-    }
-}
-
-#[derive(Debug)]
+// Used by the logic in parse_record(). Knowing the type of the record could be important later.
+#[allow(dead_code)] 
 enum EntryValue {
     Float(f32),
     Text(String),
@@ -162,13 +147,14 @@ enum EntryValue {
 
 #[derive(Debug)]
 pub enum EntryType {
-    Affix(String, AffixInfo), // String is record name
+    Affix(AffixInfo), // String is record name
     Item(String, String), // record name, tag name
 }
 
 #[derive(Debug)]
 pub struct AffixInfo {
     pub tag_name: Option<String>,
+    #[allow(dead_code)]
     pub rarity: String,
     pub name: Option<String>
 }
@@ -216,18 +202,7 @@ fn parse_record(record: &ArzRecord, record_name: &str, strings: &[String], is_af
                 break 'outer;
             }
 
-            //println!("{entry_key}: {:?}", entry_value);
-            //println!("{record_name} - {:?}", stat);
             vals.push((entry_key.clone(), entry_value));
-            //if record_string == "itemNameTag" {
-            //    if let ItemStat::IntField(_, index) = stat {
-            //        let tag_name = strings[index as usize].clone();
-            //        return Some((record_name, tag_name));
-            //    }
-            //}
-            //if record_string == "lootName" {
-            //    println!("lootName {record_string}");
-            //}
         }
     }
     if is_affix {
@@ -236,7 +211,7 @@ fn parse_record(record: &ArzRecord, record_name: &str, strings: &[String], is_af
             //println!("{:?}", vals);
         }
         let ai = AffixInfo { tag_name, rarity: rarity.unwrap(), name: None };
-        EntryType::Affix(record_name.to_string(), ai)
+        EntryType::Affix(ai)
     } else {
         //println!("{}, {record_name} {:?}", record.header.record_type, tag_name);
         if let Some(name) = tag_name {
@@ -259,7 +234,6 @@ fn read_record_headers(byte_vec: &mut ByteReader, header: &ArzArchiveHeader) -> 
     byte_vec.index = header.records_start as usize;
     for _ in 0..header.records_count {
         let record = ArzRecordHeader::read(byte_vec);
-        //println!("{:?}", record);
         records.push(record);
         byte_vec.index += 8;
     }

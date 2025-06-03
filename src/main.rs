@@ -34,7 +34,7 @@ impl ItemLookup {
                 let mut prefix = None;
                 if !inventory_item.prefix_name.is_empty() {
                     let tag_prefix = self.tag_names.affixes.get(&inventory_item.prefix_name);
-                    if let Some(EntryType::Affix(_, affix_info)) = tag_prefix {
+                    if let Some(EntryType::Affix(affix_info)) = tag_prefix {
                         if let Some(name) = &affix_info.name {
                             prefix = Some(name.clone());
                         } else if let Some(tag_name) = &affix_info.tag_name {
@@ -47,7 +47,7 @@ impl ItemLookup {
                 let mut suffix = None;
                 if !inventory_item.suffix_name.is_empty() {
                     let tag_suffix = self.tag_names.affixes.get(&inventory_item.suffix_name);
-                    if let Some(EntryType::Affix(_, affix_info)) = tag_suffix {
+                    if let Some(EntryType::Affix(affix_info)) = tag_suffix {
                         if let Some(name) = &affix_info.name {
                             suffix = Some(name.clone());
                         } else if let Some(tag_name) = &affix_info.tag_name {
@@ -65,6 +65,20 @@ impl ItemLookup {
             None
         }
     }
+
+    fn iterate_item(&self, inventory_item: &InventoryItem, msg_prefix: &str) {
+        if let Some(ci) = self.lookup_item(inventory_item) {
+            if ci.prefix.is_none() {
+                println!("{msg_prefix}{} {}", ci.name, ci.suffix.unwrap_or_default());
+            } else {
+                println!("{msg_prefix}{} {} {}", ci.prefix.unwrap(), ci.name, ci.suffix.unwrap_or_default());
+            }
+        } else {
+            println!("No tag found for {}", inventory_item.base_name);
+        }
+
+    }
+
 }
 
 fn main() -> Result<(), Error> {
@@ -102,34 +116,20 @@ fn main() -> Result<(), Error> {
 
     let lookup = ItemLookup { localization_data, tag_names };
 
-    for (tab_index, tab) in stash.tabs.iter().enumerate() {
+    for (i, tab) in stash.tabs.iter().enumerate() {
         for inventory_item in tab {
-            if let Some(ci) = lookup.lookup_item(inventory_item) {
-                let tab_nr = tab_index + 1;
-                if ci.prefix.is_none() {
-                    println!("Shared stash tab {tab_nr}: {} {}", ci.name, ci.suffix.unwrap_or_default());
-                } else {
-                    println!("Shared stash tab {tab_nr}: {} {} {}", ci.prefix.unwrap(), ci.name, ci.suffix.unwrap_or_default());
-                }
-            } else {
-                println!("No tag found for {}", inventory_item.base_name);
-            }
+            lookup.iterate_item(inventory_item, &format!("Shared stash tab {}: ", i + 1));
         }
     }
 
     for (i, bag) in char_items.inventory.bags.iter().enumerate() {
         for inventory_item in &bag.items {
-            if let Some(ci) = lookup.lookup_item(inventory_item) {
-                let char_name = &char_items.name;
-                if ci.prefix.is_none() {
-                    println!("{char_name} bag {i}: {} {}", ci.name, ci.suffix.unwrap_or_default());
-                } else {
-                    println!("{char_name} bag {i}: {} {} {}", ci.prefix.unwrap(), ci.name, ci.suffix.unwrap_or_default());
-                }
-            } else {
-                println!("No tag found for {}", inventory_item.base_name);
-            }
+            lookup.iterate_item(inventory_item, &format!("{} bag {}: ", char_items.name, i + 1));
         }
+    }
+
+    for (i, inventory_item) in char_items.inventory.equipment.iter().enumerate() {
+        lookup.iterate_item(&inventory_item.item, &format!("{} item {}: ", char_items.name, i + 1));
     }
 
     Ok(())
