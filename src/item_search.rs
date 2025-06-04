@@ -1,15 +1,15 @@
-use crate::inventory_item::InventoryItem;
 use crate::arz_parser::EntryType;
+use crate::inventory_item::InventoryItem;
 
-use std::{fmt, fmt::Display};
 use std::collections::HashMap;
+use std::{fmt, fmt::Display};
 
 pub type LocalizationStrings = HashMap<String, String>;
 
 #[derive(Debug, Default)]
 pub struct TagNames {
     pub items: HashMap<String, EntryType>,
-    pub affixes: HashMap<String, EntryType>
+    pub affixes: HashMap<String, EntryType>,
 }
 
 pub struct ItemLookup {
@@ -26,37 +26,48 @@ pub struct CompleteItem {
     quantity: u32,
 }
 
-impl CompleteItem {
-}
+impl CompleteItem {}
 
 impl Display for CompleteItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let prelude = {
+        let quantity = {
             if self.quantity > 1 {
-                format!("{}x ", self.quantity)
+                format!("(x{}) ", self.quantity)
             } else {
                 "".to_string()
             }
         };
-        let postlude ={
+        let lvl_req = {
             if let Some(req) = self.level_req {
-                format!(" [lvl {req}] ")
+                format!("[lvl {req}]")
             } else {
                 "".to_string()
             }
         };
 
+        let name = &self.name;
         if self.prefix.is_none() {
-            write!(f, "{prelude}{} {}{postlude}", self.name, self.suffix.as_ref().unwrap_or(&"".to_string()))
+            write!(
+                f,
+                "{lvl_req} {quantity}{name} {}",
+                self.suffix.as_ref().unwrap_or(&"".to_string())
+            )
         } else {
-            write!(f, "{prelude}{} {} {}{postlude}", self.prefix.as_ref().unwrap(), self.name, self.suffix.as_ref().unwrap_or(&"".to_string()))
+            write!(
+                f,
+                "{lvl_req} {} {name} {}",
+                self.prefix.as_ref().unwrap(),
+                self.suffix.as_ref().unwrap_or(&"".to_string())
+            )
         }
     }
 }
 
 impl ItemLookup {
     pub fn lookup_item(&self, inventory_item: &InventoryItem) -> Option<CompleteItem> {
-        if let Some(EntryType::Item(_record_name, tag_name, level_req)) = self.tag_names.items.get(&inventory_item.base_name) {
+        if let Some(EntryType::Item(_record_name, tag_name, level_req)) =
+            self.tag_names.items.get(&inventory_item.base_name)
+        {
             if let Some(name) = self.localization_data.get(tag_name) {
                 let mut prefix = None;
                 if !inventory_item.prefix_name.is_empty() {
@@ -90,7 +101,13 @@ impl ItemLookup {
                 if name.starts_with("^k") {
                     name.drain(0..2);
                 }
-                Some(CompleteItem { name, prefix, suffix, level_req: *level_req, quantity })
+                Some(CompleteItem {
+                    name,
+                    prefix,
+                    suffix,
+                    level_req: *level_req,
+                    quantity,
+                })
             } else {
                 None
             }
@@ -112,4 +129,3 @@ impl ItemLookup {
         }
     }
 }
-
