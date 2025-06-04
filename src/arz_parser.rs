@@ -204,7 +204,7 @@ enum EntryValue {
 #[derive(Debug)]
 pub enum EntryType {
     Affix(AffixInfo),
-    Item(String, String), // record name, tag name
+    Item(String, String, Option<u32>), // record name, tag name, level req
 }
 
 #[derive(Debug)]
@@ -222,6 +222,7 @@ fn parse_record(record_header: &ArzRecordHeader, data: Vec<u8>, record_name: &st
     let mut tag_name: Option<String> = None; // used by most items and affixes
     let mut description: Option<String> = None; // fallback for relics that don't have itemNameTag
     let mut rarity: Option<String> = None;
+    let mut level_req: Option<u32> = None;
 
     //println!("Processing record: {record_name}");
 
@@ -245,12 +246,21 @@ fn parse_record(record_header: &ArzRecordHeader, data: Vec<u8>, record_name: &st
                     }
                     EntryValue::Text(value.clone())
                 },
-                _ => EntryValue::Int(reader.read_u32()),
+                _ =>
+                { 
+
+                    let int = reader.read_u32();
+                    //Seems like the "levelRequirement" field isn't useful..?
+                    if entry_key.as_str() == "itemLevel" {
+                        level_req = Some(int);
+                    }
+                    EntryValue::Int(int) 
+                },
             };
 
             // Stop reading data once we found what we came for.
-            // We only need the tag name for items
-            if !is_affix && tag_name.is_some() {
+            // We only need these fields for items
+            if !is_affix && tag_name.is_some() && level_req.is_some() {
                 break 'outer;
             }
             // We can also use the rarity for affixes to display them nicely in the UI
@@ -258,6 +268,7 @@ fn parse_record(record_header: &ArzRecordHeader, data: Vec<u8>, record_name: &st
                 break 'outer;
             }
 
+            // These are actually only used when debugging
             vals.push((entry_key.clone(), entry_value));
         }
     }
@@ -272,11 +283,11 @@ fn parse_record(record_header: &ArzRecordHeader, data: Vec<u8>, record_name: &st
         //println!("{}, {record_name} {:?}", record.header.record_type, tag_name);
         #[allow(clippy::manual_map)]
         if let Some(name) = tag_name {
-            return Some(EntryType::Item(record_name.to_string(), name.clone()))
+            return Some(EntryType::Item(record_name.to_string(), name.clone(), level_req))
         } else if let Some(desc) = description {
             if !desc.is_empty() {
                 //println!("No tag but had description: {}, {record_name} {:?}", record_header.record_type, tag_name);
-                return Some(EntryType::Item(record_name.to_string(), desc.clone()))
+                return Some(EntryType::Item(record_name.to_string(), desc.clone(), level_req))
             } else {
                 println!("Empty tag and description: {}, {record_name} {:?}", record_header.record_type, tag_name);
             }
@@ -287,7 +298,7 @@ fn parse_record(record_header: &ArzRecordHeader, data: Vec<u8>, record_name: &st
         //    println!("{key}: {:?}", val);
         //}
         // we tried everything, so maybe use record_name as tag
-        Some(EntryType::Item(record_name.to_string(), record_name.to_string()))
+        Some(EntryType::Item(record_name.to_string(), record_name.to_string(), level_req))
     }
 }
 

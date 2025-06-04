@@ -22,22 +22,41 @@ pub struct CompleteItem {
     name: String,
     prefix: Option<String>,
     suffix: Option<String>,
+    level_req: Option<u32>,
     quantity: u32,
+}
+
+impl CompleteItem {
 }
 
 impl Display for CompleteItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let prelude = {
+            if self.quantity > 1 {
+                format!("{}x ", self.quantity)
+            } else {
+                "".to_string()
+            }
+        };
+        let postlude ={
+            if let Some(req) = self.level_req {
+                format!(" [lvl {req}] ")
+            } else {
+                "".to_string()
+            }
+        };
+
         if self.prefix.is_none() {
-            write!(f, "{} {}", self.name, self.suffix.as_ref().unwrap_or(&"".to_string()))
+            write!(f, "{prelude}{} {}{postlude}", self.name, self.suffix.as_ref().unwrap_or(&"".to_string()))
         } else {
-            write!(f, "{} {} {}", self.prefix.as_ref().unwrap(), self.name, self.suffix.as_ref().unwrap_or(&"".to_string()))
+            write!(f, "{prelude}{} {} {}{postlude}", self.prefix.as_ref().unwrap(), self.name, self.suffix.as_ref().unwrap_or(&"".to_string()))
         }
     }
 }
 
 impl ItemLookup {
     pub fn lookup_item(&self, inventory_item: &InventoryItem) -> Option<CompleteItem> {
-        if let Some(EntryType::Item(_record_name, tag_name)) = self.tag_names.items.get(&inventory_item.base_name) {
+        if let Some(EntryType::Item(_record_name, tag_name, level_req)) = self.tag_names.items.get(&inventory_item.base_name) {
             if let Some(name) = self.localization_data.get(tag_name) {
                 let mut prefix = None;
                 if !inventory_item.prefix_name.is_empty() {
@@ -66,7 +85,12 @@ impl ItemLookup {
                     }
                 }
                 let quantity = inventory_item.stack_count;
-                Some(CompleteItem { name: name.clone(), prefix, suffix, quantity })
+                let mut name = name.clone();
+                // Rare components have this for some reason...
+                if name.starts_with("^k") {
+                    name.drain(0..2);
+                }
+                Some(CompleteItem { name, prefix, suffix, level_req: *level_req, quantity })
             } else {
                 None
             }
@@ -79,11 +103,8 @@ impl ItemLookup {
         if let Some(ci) = self.lookup_item(inventory_item) {
             let item_name = ci.to_string();
             if item_name.to_lowercase().contains(&self.search_term) {
-                if ci.quantity > 1 {
-                    println!("{item_source}: {}x {item_name}", ci.quantity);
-                } else {
-                    println!("{item_source}: {item_name}");
-                }
+                // Most of print logic is handled inside CompleteItem
+                println!("{item_source}: {ci}");
             }
         // There are some items with blank fields that might be unused assets. Otherwise log an error.
         } else if !inventory_item.base_name.is_empty() {
