@@ -1,4 +1,5 @@
 use crate::inventory_item::InventoryItem;
+use crate::stash;
 use crate::stash::StashItem;
 
 use super::decrypt::Decrypt;
@@ -7,6 +8,26 @@ use std::io::Error;
 use std::path::PathBuf;
 
 const EQUIPMENT_SLOTS: usize = 12;
+
+pub struct PlayerStash {
+    pub tabs: Vec<Vec<InventoryItem>>
+}
+impl PlayerStash {
+    fn read(decrypt: &mut Decrypt) -> Result<PlayerStash, Error> {
+        let (start, block) = decrypt.read_block_start();
+        assert!(start == 4, "Expected player stash block to start with 0.");
+        assert!(decrypt.read_int() == 6, "Expected character stash version to be 6.");
+        let num_tabs = decrypt.read_int();
+        let mut tabs = Vec::with_capacity(num_tabs as usize);
+        for _ in 0..num_tabs {
+            tabs.push(stash::read_stash_tab(decrypt)?);
+        }
+        decrypt.read_block_end(&block).unwrap();
+        Ok(PlayerStash { 
+            tabs
+        })
+    }
+}
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -41,9 +62,8 @@ impl InventoryEquipment {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct Bag {
-    some_bool: u8,
+    _some_bool: u8,
     pub items: Vec<InventoryItem>,
 }
 
@@ -52,7 +72,7 @@ impl Bag {
         let (start, block) = decrypt.read_block_start();
         assert!(start == 0, "expected non-zero start of bag block");
         let ret = Self {
-            some_bool: decrypt.read_byte(),
+            _some_bool: decrypt.read_byte(),
             items: {
                 let len = decrypt.read_int();
                 let mut ret = Vec::with_capacity(len as usize);
@@ -74,7 +94,7 @@ impl Inventory {
         assert_eq!(decrypt.read_int(), 4);
         let flag = decrypt.read_byte();
         if flag == 0 {
-            panic!("oh no flag was 0");
+            panic!("This byte was supposed to be 0. The file format will be wrong and I can't continue.");
         }
         let num_bags = decrypt.read_int();
         let focused = decrypt.read_int();
@@ -199,6 +219,7 @@ impl PlayerHeader {
 pub struct CharacterItems {
     pub name: String,
     pub inventory: Inventory,
+    pub stash: PlayerStash,
 }
 
 impl CharacterItems {
@@ -219,9 +240,12 @@ impl CharacterItems {
         //skip_character_bio(&mut decrypt);
         skip_block_with_size_n(&mut decrypt, 2, 8, 44); // skip bio
         let inventory = Inventory::read(&mut decrypt);
+        let stash = PlayerStash::read(&mut decrypt)?;
+
         Ok(Self {
             name: header.name,
             inventory,
+            stash,
         })
     }
 }

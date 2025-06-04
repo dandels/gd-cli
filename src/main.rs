@@ -159,12 +159,36 @@ fn main() -> Result<(), Error> {
                 }
             }
 
+            for (i, tab) in char_items.stash.tabs.iter().enumerate() {
+                for inventory_item in tab {
+                    lookup.check_item(
+                        inventory_item,
+                        &format!("{} stash tab {}", char_items.name, i + 1),
+                    );
+                }
+            }
+
             for inventory_item in char_items.inventory.equipment.iter() {
                 lookup.check_item(
                     &inventory_item.item,
                     &format!("Equipped by {}", char_items.name),
                 );
             }
+
+            for inventory_item in char_items.inventory.weapon_set_1.iter() {
+                lookup.check_item(
+                    &inventory_item.item,
+                    &format!("Equipped by {}, weapon set 1", char_items.name),
+                );
+            }
+
+            for inventory_item in char_items.inventory.weapon_set_2.iter() {
+                lookup.check_item(
+                    &inventory_item.item,
+                    &format!("Equipped by {}, weapon set 2", char_items.name),
+                );
+            }
+
             tx.send(true).unwrap();
         });
     }
