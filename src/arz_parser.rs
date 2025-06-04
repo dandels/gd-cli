@@ -95,7 +95,7 @@ pub fn read_archive(path: &PathBuf) -> Result<(Items, Affixes), Error> {
         let record_name = strings[record_header.string_index as usize].clone();
         // Uncomment to debug why something is not getting properly read
         // note for debugging: record_type.is_empty() also yields values
-        //let catch = "records/endlessdungeon/scriptentities/portal_s03.dbr";
+        //let catch = "records/items/crafting/blueprints/other/craft_potion_royaljellyointment.dbr";
         //if record_name == catch {
         //    println!("{record_name}: {:?}", record_header.record_type);
         //}
@@ -113,8 +113,6 @@ pub fn read_archive(path: &PathBuf) -> Result<(Items, Affixes), Error> {
                 let ignore_list = [
                     "ItemTransmuter",
                     "ItemTransmuterSet",
-                    "ItemArtifactFormula",
-                    "ItemNote",
                     "ItemSetFormula",
                     "ItemRandomSetFormula",
                 ];
@@ -153,6 +151,7 @@ pub fn read_archive(path: &PathBuf) -> Result<(Items, Affixes), Error> {
                 let mut reader = reader.clone();
 
                 let tx = tx.clone();
+                // TODO this spawns needlessly many threads
                 thread::spawn(move || {
                     let data = decompress(&mut reader, &record_header);
                     let is_affix = record_header.record_type == "LootRandomizer";
