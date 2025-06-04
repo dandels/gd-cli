@@ -2,6 +2,9 @@ use crate::byte_reader::ByteReader;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::io::Error;
+use std::thread;
+use std::sync::mpsc;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct ArzRecordHeader {
@@ -24,11 +27,6 @@ impl ArzRecordHeader {
             size_decompressed: byte_vec.read_u32(),
         }
     }
-}
-
-pub struct ArzRecord {
-    pub header: ArzRecordHeader,
-    pub data: Vec<u8>,
 }
 
 // v3 of the header?
@@ -74,70 +72,130 @@ impl EntryHeader {
     }
 }
 
-#[derive(Debug)]
-pub struct ArzParser {
-    pub items: HashMap<String, EntryType>,
-    pub affixes: HashMap<String, EntryType>
-}
+type Items = HashMap<String, EntryType>;
+type Affixes = HashMap<String, EntryType>;
 
-impl ArzParser {
-    pub fn new() -> Self {
-        Self {
-            items: HashMap::new(),
-            affixes: HashMap::new()
+pub fn read_archive(path: &PathBuf) -> Result<(Items, Affixes), Error> {
+    let mut reader = ByteReader::from_file(path)?;
+
+    let archive_header = ArzArchiveHeader::new(&mut reader);
+
+    // Asserts copied from Item Assistant example
+    assert_eq!(archive_header.unknown, 2);
+    assert_eq!(archive_header.version, 3);
+
+    let strings = Arc::new(read_strings(&mut reader, &archive_header));
+    let record_headers = read_record_headers(&mut reader, &archive_header);
+
+    let (tx, rx) = mpsc::channel();
+    let mut threads = 0;
+    let mut thread_names = Vec::new();
+
+    'header_loop: for record_header in record_headers {
+        let record_name = strings[record_header.string_index as usize].clone();
+        // Uncomment to debug why something is not getting properly read
+        // note for debugging: record_type.is_empty() also yields values
+        //let catch = "records/endlessdungeon/scriptentities/portal_s03.dbr";
+        //if record_name == catch {
+        //    println!("{record_name}: {:?}", record_header.record_type);
+        //}
+
+        if
+            record_header.record_type.starts_with("Armor") 
+            || record_header.record_type.starts_with("Item") 
+            || record_header.record_type.starts_with("QuestItem")
+            || record_header.record_type.starts_with("Weapon") 
+            || record_header.record_type.starts_with("OneShot_Scroll") 
+            // starts_with() would also match "LootRandomizerTable"
+            || record_header.record_type == "LootRandomizer"
+        {
+            if record_header.record_type.starts_with("Item") {
+                let ignore_list = [
+                    "ItemTransmuter",
+                    "ItemTransmuterSet",
+                    "ItemArtifactFormula",
+                    "ItemNote",
+                    "ItemSetFormula",
+                    "ItemRandomSetFormula",
+                ];
+                for ign in ignore_list {
+                    if record_header.record_type.starts_with(ign) {
+                        continue 'header_loop;
+                    }
+                }
+
+                //println!("{}", record_header.record_type);
+            }
+            if record_name.starts_with("records/items/") 
+                || record_name.starts_with("records/creatures/npcs/npcgear/")
+                || record_name.starts_with("records/storyelements/signs/")
+                || record_name.starts_with("records/endlessdungeon/") {
+                //println!("record type {}", record_header.record_type);
+                let ignore_list = [
+                    "records/items/enemygear/",
+                    "records/items/loreobjects/",
+                    "records/items/transmutes/",
+                    // Searching for unique affixes. Maybe later.
+                    "records/items/lootaffixes/prefixunique/", 
+                    "records/items/lootaffixes/suffixunique/",
+                    "records/items/lootaffixes/completionrelics",
+                    "records/items/lootaffixes/completion",
+                    "records/items/lootaffixes/crafting",
+                ];
+                for ign in ignore_list {
+                    if record_name.starts_with(ign) {
+                        continue 'header_loop;
+                    }
+                }
+
+                threads += 1;
+                thread_names.push(record_name.clone());
+                let strings = strings.clone();
+                let mut reader = reader.clone();
+
+                let tx = tx.clone();
+                thread::spawn(move || {
+                    let data = decompress(&mut reader, &record_header);
+                    let is_affix = record_header.record_type == "LootRandomizer";
+                    let entry = parse_record(&record_header, data, &record_name, &strings, is_affix);
+                    tx.send(Some((record_name, entry, is_affix))).unwrap();
+                });
+            }
         }
     }
 
-    pub fn add_archive(&mut self, path: &PathBuf) -> Result<(), Error> {
-        let mut reader = ByteReader::from_file(path)?;
+    let mut items = Items::new();
+    let mut affixes = Affixes::new();
 
-        let archive_header = ArzArchiveHeader::new(&mut reader);
-
-        // Asserts copied from Item Assistant example
-        assert_eq!(archive_header.unknown, 2);
-        assert_eq!(archive_header.version, 3);
-
-        let strings = read_strings(&mut reader, &archive_header);
-        let record_headers = read_record_headers(&mut reader, &archive_header);
-
-        for record_header in &record_headers {
-            if
-                // note for debugging: record_type.is_empty() also yields values
-                record_header.record_type.starts_with("Armor") 
-                    || record_header.record_type.starts_with("Item") 
-                    || record_header.record_type.starts_with("Weapon") 
-                    /* Matches at least LootRandomizer and LootRandomizerTable */
-                    || record_header.record_type == "LootRandomizer"
-            {
-                if record_header.record_type.starts_with("Item") { // This matches multiple types
-                    //println!("{}", record_header.record_type);
-                    continue;
-                }
-                let record_name = strings[record_header.string_index as usize].clone();
-                if record_name.starts_with("records/items/") {
-                    //println!("record type {}", record_header.record_type);
-                    if record_name.starts_with("records/items/enemygear/") {
-                        continue;
-                    }
-                    let record = ArzRecord {
-                        header: record_header.clone(),
-                        data: decompress(&mut reader, record_header)
-                    };
-                    let is_affix = record_header.record_type == "LootRandomizer";
-                    let entry = parse_record(&record, &record_name, &strings, is_affix);
-                    if is_affix {
-                        self.affixes.insert(record_name, entry);
-                    } else {
-                        self.items.insert(record_name, entry);
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..threads {
+        match rx.recv() {
+            Ok(msg) => {
+                if let Some((record_name, entry, is_affix)) = msg {
+                    match entry {
+                        Some(e) => {
+                            if is_affix {
+                                affixes.insert(record_name, e);
+                            } else {
+                                items.insert(record_name, e);
+                            }
+                        }
+                        None => {
+                            println!("nothing found for {record_name}");
+                        }
                     }
                 }
             }
+            Err(e) => {
+                println!("recv for {} failed with err {e}", &thread_names[i]);
+            }
         }
-        Ok(())
     }
+    Ok((items, affixes))
 }
 
 // Used by the logic in parse_record(). Knowing the type of the record could be important later.
+#[derive(Debug)]
 #[allow(dead_code)] 
 enum EntryValue {
     Float(f32),
@@ -159,30 +217,33 @@ pub struct AffixInfo {
     pub name: Option<String>
 }
 
-fn parse_record(record: &ArzRecord, record_name: &str, strings: &[String], is_affix: bool) -> EntryType {
-    let mut reader = ByteReader::from_slice(&record.data);
+fn parse_record(record_header: &ArzRecordHeader, data: Vec<u8>, record_name: &str, strings: &[String], is_affix: bool) -> Option<EntryType> {
+    let mut reader = ByteReader::from_vec(data);
 
     let mut vals: Vec<(String, EntryValue)> = Vec::new();
-    let mut tag_name: Option<String> = None;
+    let mut tag_name: Option<String> = None; // used by most items and affixes
+    let mut description: Option<String> = None; // fallback for relics that don't have itemNameTag
     let mut rarity: Option<String> = None;
 
     //println!("Processing record: {record_name}");
 
     let mut i = 0;
-    'outer: while i < record.header.size_decompressed / 4 {
+    'outer: while i < record_header.size_decompressed / 4 {
         let entry_header = EntryHeader::read(&mut reader);
         i += 2 + entry_header.entry_count as u32;
         let entry_key = &strings[entry_header.string_index as usize];
+        //println!("entry key {entry_key}");
         for _ in 0..entry_header.entry_count {
             let entry_value = match entry_header.entry_type {
                 1 => EntryValue::Float(reader.read_f32()),
                 2 => {
                     let int = reader.read_u32();
                     let value = &strings[int as usize];
-                    if entry_key == "lootRandomizerName" || entry_key == "itemNameTag" {
-                       tag_name = Some(value.clone());
-                    } else if entry_key == "itemClassification" {
-                        rarity = Some(value.clone());
+                    match entry_key.as_str() {
+                        "lootRandomizerName" | "itemNameTag" => { tag_name = Some(value.clone()); }
+                        "itemClassification" => { rarity = Some(value.clone()); }
+                        "description" => { description = Some(value.clone()); }
+                        _ => {}
                     }
                     EntryValue::Text(value.clone())
                 },
@@ -192,7 +253,6 @@ fn parse_record(record: &ArzRecord, record_name: &str, strings: &[String], is_af
             // Stop reading data once we found what we came for.
             // We only need the tag name for items
             if !is_affix && tag_name.is_some() {
-                //println!("job's done");
                 break 'outer;
             }
             // We can also use the rarity for affixes to display them nicely in the UI
@@ -205,19 +265,31 @@ fn parse_record(record: &ArzRecord, record_name: &str, strings: &[String], is_af
     }
     if is_affix {
         if tag_name.is_none() {
-            //println!("No tag found for: {:?}", record_name);
+            //println!("Nothing found for: {:?}", record_name);
             //println!("{:?}", vals);
         }
         let ai = AffixInfo { tag_name, rarity: rarity.unwrap(), name: None };
-        EntryType::Affix(ai)
+        Some(EntryType::Affix(ai))
     } else {
         //println!("{}, {record_name} {:?}", record.header.record_type, tag_name);
+        #[allow(clippy::manual_map)]
         if let Some(name) = tag_name {
-            EntryType::Item(record_name.to_string(), name.clone())
-        } else {
-            // Not sure if this is an acceptable state of the db, but TODO proper error handling
-            panic!("Tag Name should not be None.");
+            return Some(EntryType::Item(record_name.to_string(), name.clone()))
+        } else if let Some(desc) = description {
+            if !desc.is_empty() {
+                //println!("No tag but had description: {}, {record_name} {:?}", record_header.record_type, tag_name);
+                return Some(EntryType::Item(record_name.to_string(), desc.clone()))
+            } else {
+                println!("Empty tag and description: {}, {record_name} {:?}", record_header.record_type, tag_name);
+            }
         }
+        // Uncomment to debug what is getting parsed
+        //println!("No tagname found for {record_name}.", );
+        //for (key, val) in vals {
+        //    println!("{key}: {:?}", val);
+        //}
+        // we tried everything, so maybe use record_name as tag
+        Some(EntryType::Item(record_name.to_string(), record_name.to_string()))
     }
 }
 

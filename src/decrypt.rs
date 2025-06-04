@@ -24,7 +24,7 @@ impl Decrypt {
         let mut file = File::open(path)?;
         let mut bytes = Vec::new();
         let _len = file.read_to_end(&mut bytes)?;
-        let mut reader = ByteReader::from_slice(&bytes);
+        let mut reader = ByteReader::from_vec(bytes);
         let key = reader.read_u32() ^ 0x55555555;
         let mut k = key;
         let mut table = [0; 256];
@@ -71,14 +71,14 @@ impl Decrypt {
     pub fn read_str(&mut self) -> Result<String, Error> {
         let len = self.read_int();
         if len > 0 {
-            let str_buf = self.slice_reader.read_n_bytes(len);
+            let mut str_buf = self.slice_reader.read_n_bytes(len);
             for i in 0..len {
                 let byte = (str_buf[i as usize] as u32 ^ self.key) as u8;
                 self.key ^= self.table[str_buf[i as usize] as usize];
                 str_buf[i as usize] = byte;
             }
             // TODO error handling for invalid strings
-            let ret_str = str::from_utf8(str_buf).unwrap().to_string();
+            let ret_str = String::from_utf8(str_buf).unwrap();
             return Ok(ret_str);
         }
         Ok("".to_string())
@@ -87,7 +87,7 @@ impl Decrypt {
     pub fn read_wide_string(&mut self) -> Result<String, Error> {
         let len = self.read_int() * 2;
         if len > 0 {
-            let str_buf: &mut [u8] = self.slice_reader.read_n_bytes(len);
+            let mut str_buf = self.slice_reader.read_n_bytes(len);
 
             for i in 0..len {
                 let byte = (str_buf[i as usize] as u32 ^ self.key) as u8;
@@ -95,7 +95,7 @@ impl Decrypt {
                 str_buf[i as usize] = byte;
             }
             // TODO error handling for invalid strings
-            let ret_str = str::from_utf8(str_buf).unwrap().to_string();
+            let ret_str = String::from_utf8(str_buf).unwrap();
             return Ok(ret_str);
         }
         Ok("".to_string())

@@ -2,9 +2,12 @@ use std::io::Error;
 use std::io::Read;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+// Allow cloning the reader to have multiple views into the same underlying data
+#[derive(Clone)]
 pub struct ByteReader {
-    pub bytes: Vec<u8>,
+    pub bytes: Arc<Vec<u8>>,
     pub index: usize,
 }
 
@@ -13,14 +16,12 @@ impl ByteReader {
         let mut file = File::open(path)?;
         let mut bytes = Vec::new();
         let _len = file.read_to_end(&mut bytes)?;
-        Ok(Self { bytes, index: 0 })
+        Ok(Self { bytes: Arc::new(bytes), index: 0 })
     }
 
-    /* Creating a vec for this seems wasteful, but I don't want to figure out how to deal with the lifetime issues of a
-     * &[u8] */
-    pub fn from_slice(bytes: &[u8]) -> Self {
+    pub fn from_vec(bytes: Vec<u8>) -> Self {
         Self {
-            bytes: bytes.to_vec(),
+            bytes: Arc::new(bytes),
             index: 0
         }
     }
@@ -55,8 +56,6 @@ impl ByteReader {
         ret
     }
 
-
-
     pub fn read_u64(&mut self) -> u64 {
         let new_index = self.index + 8;
         let ret =
@@ -65,15 +64,15 @@ impl ByteReader {
         ret
     }
 
-    pub fn read_n_bytes(&mut self, n: u32) -> &mut [u8] {
+    pub fn read_n_bytes(&mut self, n: u32) -> Vec<u8> {
         let n = n as usize;
-        let ret = &mut self.bytes[self.index..self.index + n];
+        let ret = &self.bytes[self.index..self.index + n];
         self.index += n;
-        ret
+        ret.to_vec()
     }
 
     pub fn read_string(&mut self, len: u32) -> String {
-        str::from_utf8(self.read_n_bytes(len)).unwrap().to_string()
+        String::from_utf8(self.read_n_bytes(len)).unwrap()
     }
 
     pub fn read_null_string(&mut self) -> Option<String> {

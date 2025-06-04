@@ -78,47 +78,45 @@ impl ArcRecordPartMetadata {
     }
 }
 
-pub struct ArcParser {
-    //pub data: Vec<Vec<u8>>,
-    pub map: HashMap<String, String>
-}
+pub fn read_archive(path: &PathBuf) -> Result<HashMap<String, String>, Error> {
+    let mut byte_vec = ByteReader::from_file(path)?;
+    let archive_header = ArcArchiveHeader::new(&mut byte_vec);
+    assert!(archive_header.version == 3, "expected header version 3, is {}", archive_header.version);
 
-impl ArcParser {
-    pub fn new() -> Self {
-        Self {
-            map: HashMap::new()
+    let record_headers = read_record_headers(&mut byte_vec, &archive_header);
+    let record_parts_metadata = read_record_metadata(&mut byte_vec, &archive_header);
+
+    let strings = read_strings(&mut byte_vec, &archive_header);
+    //let mut items_index = None;
+    let mut indices = Vec::new();
+    for (i, string) in strings.iter().enumerate() {
+        let file_names = [
+            "tags_items.txt",
+            "tagsgdx1_items.txt",
+            "tagsgdx2_items.txt",
+            "tagsgdx2_endlessdungeon.txt",
+            "tags_storyelements.txt",
+            "tagsgdx1_storyelements.txt",
+            "tagsgdx2_storyelements.txt",
+        ];
+        if file_names.iter().any(|s| string == s) {
+            indices.push(i);
         }
     }
-
-    pub fn add_archive(&mut self, path: &PathBuf) -> Result<(), Error> {
-        let mut byte_vec = ByteReader::from_file(path)?;
-        let archive_header = ArcArchiveHeader::new(&mut byte_vec);
-        assert!(archive_header.version == 3, "expected header version 3, is {}", archive_header.version);
-
-        let record_headers = read_record_headers(&mut byte_vec, &archive_header);
-        let record_parts_metadata = read_record_metadata(&mut byte_vec, &archive_header);
-
-        let strings = read_strings(&mut byte_vec, &archive_header);
-        let mut items_index = None;
-        for (i, string) in strings.iter().enumerate() {
-            //println!("{string}");
-            if string == "tags_items.txt" || string == "tagsgdx1_items.txt" || string == "tagsgdx2_items.txt" {
-                //println!("index is {}", i);
-                items_index = Some(i);
-                break;
-            }
-        }
-        assert_eq!(archive_header.files_count as usize, record_headers.len());
-        let data = decompress(&mut byte_vec, &record_parts_metadata[items_index.unwrap()]);
+    assert_eq!(archive_header.files_count as usize, record_headers.len());
+    let mut map = HashMap::new();
+    for i in indices {
+        let data = decompress(&mut byte_vec, &record_parts_metadata[i]);
         for string in String::from_utf8(data).unwrap().lines() {
             if string.is_empty() || string.starts_with("#") {
                 continue
             }
-            let (key, value) = string.split_once('=').unwrap();
-            self.map.insert(key.to_string(), value.to_string());
+            if let Some((key, value)) = string.split_once('=') {
+                map.insert(key.to_string(), value.to_string());
+            }
         }
-        Ok(())
     }
+    Ok(map)
 }
 
 fn read_record_metadata(byte_vec: &mut ByteReader, header: &ArcArchiveHeader) -> Vec<ArcRecordPartMetadata> {
@@ -157,7 +155,7 @@ fn decompress(byte_vec: &mut ByteReader, metadata: &ArcRecordPartMetadata) -> Ve
         data.append(&mut byte_vec.read_n_bytes(metadata.len_compressed).to_vec());
     } else {
         let mut buf = vec![0; metadata.len_decompressed as usize];
-        let compressed_data = &*byte_vec.read_n_bytes(metadata.len_compressed);
+        let compressed_data = &byte_vec.read_n_bytes(metadata.len_compressed);
         lz4::block::decompress_to_buffer(compressed_data, Some(metadata.len_decompressed.try_into().unwrap()), &mut buf).unwrap();
         data.append(&mut buf.to_vec());
     }

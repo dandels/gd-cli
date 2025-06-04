@@ -8,22 +8,17 @@ mod item_search;
 mod player;
 mod stash;
 
-use arc_parser::ArcParser;
-use arz_parser::*;
 use byte_reader::ByteReader;
 use config::Config;
 use item_search::ItemLookup;
+use item_search::TagNames;
 use player::CharacterItems;
 use stash::Stash;
 
 use std::io::Error;
 use std::sync::Arc;
-use std::sync::RwLock;
-use std::sync::atomic::AtomicU16;
-use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 use std::thread;
-use std::thread::sleep;
-use std::time::Duration;
 
 fn main() -> Result<(), Error> {
     let mut args = std::env::args();
@@ -32,7 +27,7 @@ fn main() -> Result<(), Error> {
         search_term.push_str(&(" ".to_owned() + &arg.to_lowercase()));
     }
 
-    let config = Config::new();
+    let config = Arc::new(Config::new());
 
     if config.installation_dir().is_none() {
         println!("The game installation dir needs to be configured.");
@@ -44,33 +39,87 @@ fn main() -> Result<(), Error> {
         return Ok(());
     }
 
-    let db_threads_count = Arc::new(AtomicU16::new(0));
-
-    let tag_names = Arc::new(RwLock::new(ArzParser::new()));
-    for path in config.get_databases() {
-        let tag_names = tag_names.clone();
-        db_threads_count.fetch_add(1, Ordering::AcqRel);
-        let db_threads_count = db_threads_count.clone();
+    // Read game database files in new threads and send them to "db_done_rx"
+    let (db_done_tx, db_done_rx) = mpsc::channel();
+    {
+        let config = config.clone();
         thread::spawn(move || {
-            tag_names.write().unwrap().add_archive(&path).unwrap();
-            db_threads_count.fetch_sub(1, Ordering::AcqRel);
+            let mut receivers = Vec::new();
+            for path in config.get_databases() {
+                let (db_thread_tx, db_thread_rx) = mpsc::channel();
+                receivers.push(db_thread_rx);
+                thread::spawn(move || {
+                    let (items, affixes) = arz_parser::read_archive(&path).unwrap();
+                    db_thread_tx.send((items, affixes)).unwrap();
+                });
+            }
+            let mut tag_names = TagNames::default();
+            for rcv in receivers {
+                if let Ok((items, affixes)) = rcv.recv() {
+                    tag_names.items.extend(items);
+                    tag_names.affixes.extend(affixes);
+                }
+            }
+            db_done_tx.send(tag_names).unwrap();
         });
     }
 
-    let localization_data = Arc::new(RwLock::new(ArcParser::new()));
-    for path in config.get_localization_files() {
-        let localization_data = localization_data.clone();
-        db_threads_count.fetch_add(1, Ordering::AcqRel);
-        let db_threads_count = db_threads_count.clone();
+    // Read localization strings in new threads and send them to "localization_done_rx"
+    let (localization_done_tx, localization_done_rx) = mpsc::channel();
+    {
+        let config = config.clone();
         thread::spawn(move || {
-            localization_data
-                .write()
-                .unwrap()
-                .add_archive(&path)
-                .unwrap();
-            db_threads_count.fetch_sub(1, Ordering::AcqRel);
+            let mut receivers = Vec::new();
+            for path in config.get_localization_files() {
+                let (loc_tx, loc_rx) = mpsc::channel();
+                receivers.push(loc_rx);
+                thread::spawn(move || {
+                    let localization_data = arc_parser::read_archive(&path).unwrap();
+                    loc_tx.send(localization_data).unwrap();
+                });
+            }
+            let mut localization_data = item_search::LocalizationStrings::default();
+            for rcv in receivers {
+                if let Ok(map) = rcv.recv() {
+                    localization_data.extend(map);
+                }
+            }
+            localization_done_tx.send(localization_data).unwrap();
         });
     }
+
+    // Read save files in new threads and send them to "saves_done_rx"
+    let (saves_done_tx, saves_done_rx) = mpsc::channel();
+    {
+        let config = config.clone();
+        thread::spawn(move || {
+            let mut receivers = Vec::new();
+            for save in config.get_save_files() {
+                let (ci_tx, ci_rx) = mpsc::channel::<CharacterItems>();
+                receivers.push(ci_rx);
+                thread::spawn(move || match CharacterItems::read(&save) {
+                    Ok(ci) => {
+                        ci_tx.send(ci).unwrap();
+                    }
+                    Err(e) => {
+                        println!("Unable to read save file {:?}: {e}", save);
+                    }
+                });
+            }
+            let mut all_char_items = Vec::new();
+            for rx in receivers {
+                if let Ok(ci) = rx.recv() {
+                    all_char_items.push(ci);
+                }
+            }
+            saves_done_tx.send(all_char_items).unwrap();
+        });
+    }
+
+    // This causes the main thread to wait for the jobs
+    let tag_names = db_done_rx.recv().unwrap();
+    let localization_data = localization_done_rx.recv().unwrap();
+    let all_char_items = saves_done_rx.recv().unwrap();
 
     let lookup = Arc::new(ItemLookup {
         search_term,
@@ -78,29 +127,13 @@ fn main() -> Result<(), Error> {
         tag_names,
     });
 
-    let all_char_items = Arc::new(RwLock::new(Vec::new()));
-    for save in config.get_save_files() {
-        let all_char_items = all_char_items.clone();
-        thread::spawn(move || match CharacterItems::read(&save) {
-            Ok(ci) => {
-                all_char_items.write().unwrap().push(ci);
-            }
-            Err(e) => {
-                println!("Unable to read save file {:?}: {e}", save);
-            }
-        });
-    }
-
-    let search_threads_count = Arc::new(AtomicU16::new(0));
-
-    while db_threads_count.load(Ordering::SeqCst) > 0 {
-        sleep(Duration::from_millis(5));
-    }
+    // receiver.recv() all of these to make sure the threads finish
+    let mut search_receivers = Vec::new();
 
     for stash_path in config.get_stash_files() {
-        search_threads_count.fetch_add(1, Ordering::AcqRel);
+        let (tx, rx) = mpsc::channel();
+        search_receivers.push(rx);
         let lookup = lookup.clone();
-        let search_thread_count = search_threads_count.clone();
         thread::spawn(move || {
             let stash = Stash::new(&stash_path).unwrap();
             for (i, tab) in stash.tabs.iter().enumerate() {
@@ -108,18 +141,14 @@ fn main() -> Result<(), Error> {
                     lookup.check_item(inventory_item, &format!("Shared stash tab {}", i + 1));
                 }
             }
-            search_thread_count.fetch_sub(1, Ordering::AcqRel);
+            tx.send(true).unwrap();
         });
     }
 
-    for char_items in Arc::into_inner(all_char_items)
-        .unwrap()
-        .into_inner()
-        .unwrap()
-    {
+    for char_items in all_char_items {
+        let (tx, rx) = mpsc::channel();
+        search_receivers.push(rx);
         let lookup = lookup.clone();
-        search_threads_count.fetch_add(1, Ordering::AcqRel);
-        let search_thread_count = search_threads_count.clone();
         thread::spawn(move || {
             for (i, bag) in char_items.inventory.bags.iter().enumerate() {
                 for inventory_item in &bag.items {
@@ -136,16 +165,13 @@ fn main() -> Result<(), Error> {
                     &format!("Equipped by {}", char_items.name),
                 );
             }
-            search_thread_count.fetch_sub(1, Ordering::AcqRel);
+            tx.send(true).unwrap();
         });
     }
 
-    // Wait for threads to finish
-    loop {
-        std::thread::sleep(Duration::from_millis(50));
-        if search_threads_count.load(Ordering::SeqCst) == 0 {
-            break;
-        }
+    for rx in search_receivers {
+        let _ = rx.recv().unwrap();
     }
+
     Ok(())
 }

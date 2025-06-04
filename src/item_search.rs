@@ -1,20 +1,28 @@
 use crate::inventory_item::InventoryItem;
-use std::sync::RwLock;
-use std::sync::Arc;
+use crate::arz_parser::EntryType;
+
 use std::{fmt, fmt::Display};
-use crate::arc_parser::ArcParser;
-use crate::arz_parser::*;
+use std::collections::HashMap;
+
+pub type LocalizationStrings = HashMap<String, String>;
+
+#[derive(Debug, Default)]
+pub struct TagNames {
+    pub items: HashMap<String, EntryType>,
+    pub affixes: HashMap<String, EntryType>
+}
 
 pub struct ItemLookup {
     pub search_term: String,
-    pub localization_data: Arc<RwLock<ArcParser>>,
-    pub tag_names: Arc<RwLock<ArzParser>>,
+    pub localization_data: HashMap<String, String>,
+    pub tag_names: TagNames,
 }
 
 pub struct CompleteItem {
     name: String,
     prefix: Option<String>,
     suffix: Option<String>,
+    quantity: u32,
 }
 
 impl Display for CompleteItem {
@@ -29,18 +37,16 @@ impl Display for CompleteItem {
 
 impl ItemLookup {
     pub fn lookup_item(&self, inventory_item: &InventoryItem) -> Option<CompleteItem> {
-        let tag_names = self.tag_names.read().unwrap();
-        let localization_data = self.localization_data.read().unwrap();
-        if let Some(EntryType::Item(_record_name, tag_name)) = tag_names.items.get(&inventory_item.base_name) {
-            if let Some(name) = localization_data.map.get(tag_name) {
+        if let Some(EntryType::Item(_record_name, tag_name)) = self.tag_names.items.get(&inventory_item.base_name) {
+            if let Some(name) = self.localization_data.get(tag_name) {
                 let mut prefix = None;
                 if !inventory_item.prefix_name.is_empty() {
-                    let tag_prefix = tag_names.affixes.get(&inventory_item.prefix_name);
+                    let tag_prefix = self.tag_names.affixes.get(&inventory_item.prefix_name);
                     if let Some(EntryType::Affix(affix_info)) = tag_prefix {
                         if let Some(name) = &affix_info.name {
                             prefix = Some(name.clone());
                         } else if let Some(tag_name) = &affix_info.tag_name {
-                            if let Some(name) = localization_data.map.get(tag_name) {
+                            if let Some(name) = self.localization_data.get(tag_name) {
                                 prefix = Some(name.clone());
                             }
                         }
@@ -48,18 +54,19 @@ impl ItemLookup {
                 }
                 let mut suffix = None;
                 if !inventory_item.suffix_name.is_empty() {
-                    let tag_suffix = tag_names.affixes.get(&inventory_item.suffix_name);
+                    let tag_suffix = self.tag_names.affixes.get(&inventory_item.suffix_name);
                     if let Some(EntryType::Affix(affix_info)) = tag_suffix {
                         if let Some(name) = &affix_info.name {
                             suffix = Some(name.clone());
                         } else if let Some(tag_name) = &affix_info.tag_name {
-                            if let Some(name) = localization_data.map.get(tag_name) {
+                            if let Some(name) = self.localization_data.get(tag_name) {
                                 suffix = Some(name.clone());
                             }
                         }
                     }
                 }
-                Some(CompleteItem { name: name.clone(), prefix, suffix })
+                let quantity = inventory_item.stack_count;
+                Some(CompleteItem { name: name.clone(), prefix, suffix, quantity })
             } else {
                 None
             }
@@ -72,10 +79,15 @@ impl ItemLookup {
         if let Some(ci) = self.lookup_item(inventory_item) {
             let item_name = ci.to_string();
             if item_name.to_lowercase().contains(&self.search_term) {
-                println!("{item_source}: {item_name}");
+                if ci.quantity > 1 {
+                    println!("{item_source}: {}x {item_name}", ci.quantity);
+                } else {
+                    println!("{item_source}: {item_name}");
+                }
             }
-        } else {
-            //println!("No tag found for {}", inventory_item.base_name);
+        // There are some items with blank fields that might be unused assets. Otherwise log an error.
+        } else if !inventory_item.base_name.is_empty() {
+            println!("No tag found for {}", inventory_item.base_name);
         }
     }
 }
