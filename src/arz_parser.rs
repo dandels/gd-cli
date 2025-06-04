@@ -128,12 +128,11 @@ pub fn read_archive(path: &PathBuf) -> Result<(Items, Affixes), Error> {
             }
             if record_name.starts_with("records/items/") 
                 || record_name.starts_with("records/creatures/npcs/npcgear/")
-                || record_name.starts_with("records/storyelements/signs/")
+                || record_name.starts_with("records/storyelements/")
                 || record_name.starts_with("records/endlessdungeon/") {
                 //println!("record type {}", record_header.record_type);
                 let ignore_list = [
                     "records/items/enemygear/",
-                    "records/items/loreobjects/",
                     "records/items/transmutes/",
                     // Searching for unique affixes. Maybe later.
                     "records/items/lootaffixes/prefixunique/", 
