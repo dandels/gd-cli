@@ -10,6 +10,8 @@ argument, it uses it as a filter.
 [1] Decrypting the player's save files and cross-referencing the data with the
 database & localization files was anything but simple.
 
+![A screenshot of invoking "time ./gdlc.exe demonic b", which listed multiple matches across stashes and inventories. The command completed in 0.66s](/screenshot.png)
+
 # Usage
 * The installation location and save directory need to be configured.
     - For Windows: `%UserProfile%\.gdlc.conf`
