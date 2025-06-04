@@ -1,4 +1,4 @@
-# Grim Dawn loot cli
+# Grim Dawn Loot CLI
 GDLC is a simple[1] command line tool to list and search items from Grim
 Dawn characters. It reads through the user's stash, save and database files on
 each invocation, and doesn't maintain any database or state of its own. The
