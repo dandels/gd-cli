@@ -15,12 +15,12 @@ impl Config {
             None => return Self { map }, // early return
         };
         #[cfg(target_os = "windows")] {
-            config_path.push(".gdloot.conf");
+            config_path.push(".gdlc.conf");
         }
         #[cfg(not(target_os = "windows"))] {
             config_path.push(".config/");
-            config_path.push("gdloot/");
-            config_path.push("gdloot.conf");
+            config_path.push("gdlc/");
+            config_path.push("gdlc.conf");
         }
         if let Ok(mut file) = File::open(&config_path) {
             let mut buf = String::new();

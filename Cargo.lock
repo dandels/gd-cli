@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gd-cli"
+name = "gdlc"
 version = "0.1.0"
 dependencies = [
  "lz4",
