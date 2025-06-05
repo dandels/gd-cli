@@ -30,7 +30,7 @@ GDLC expects files to adhere to certain formats, and might crash noisily
 if it encounters unexpected data. Game updates that modify the file formats
 will break this tool.
 
-On a positive development note, the only external dependency is lz4.
+On a positive development note, there are very few dependencies.
 
 # Credits
 I used several other Grim Dawn tools as examples for the stash/character/database logic.
