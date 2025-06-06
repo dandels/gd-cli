@@ -1,10 +1,10 @@
 use crate::byte_reader::ByteReader;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::io::Error;
-use std::thread;
-use std::sync::mpsc;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc;
+use std::thread;
 
 #[derive(Clone, Debug)]
 pub struct ArzRecordHeader {
@@ -21,7 +21,8 @@ impl ArzRecordHeader {
         let str_len = byte_vec.read_u32();
         let record_type = byte_vec.read_string(str_len);
         Self {
-            string_index, record_type,
+            string_index,
+            record_type,
             offset: byte_vec.read_u32(),
             size_compressed: byte_vec.read_u32(),
             size_decompressed: byte_vec.read_u32(),
@@ -72,7 +73,7 @@ impl EntryHeader {
     }
 }
 
-type Items = HashMap<String, EntryType>;
+type Items = HashMap<String, (EntryType, Vec<Option<u32>>)>;
 type Affixes = HashMap<String, EntryType>;
 
 pub fn read_archive(path: &PathBuf) -> Result<(Items, Affixes), Error> {
@@ -100,12 +101,11 @@ pub fn read_archive(path: &PathBuf) -> Result<(Items, Affixes), Error> {
         //    println!("{record_name}: {:?}", record_header.record_type);
         //}
 
-        if
-            record_header.record_type.starts_with("Armor") 
-            || record_header.record_type.starts_with("Item") 
+        if record_header.record_type.starts_with("Armor")
+            || record_header.record_type.starts_with("Item")
             || record_header.record_type.starts_with("QuestItem")
-            || record_header.record_type.starts_with("Weapon") 
-            || record_header.record_type.starts_with("OneShot_Scroll") 
+            || record_header.record_type.starts_with("Weapon")
+            || record_header.record_type.starts_with("OneShot_Scroll")
             // starts_with() would also match "LootRandomizerTable"
             || record_header.record_type == "LootRandomizer"
         {
@@ -124,16 +124,17 @@ pub fn read_archive(path: &PathBuf) -> Result<(Items, Affixes), Error> {
 
                 //println!("{}", record_header.record_type);
             }
-            if record_name.starts_with("records/items/") 
+            if record_name.starts_with("records/items/")
                 || record_name.starts_with("records/creatures/npcs/npcgear/")
                 || record_name.starts_with("records/storyelements/")
-                || record_name.starts_with("records/endlessdungeon/") {
+                || record_name.starts_with("records/endlessdungeon/")
+            {
                 //println!("record type {}", record_header.record_type);
                 let ignore_list = [
                     "records/items/enemygear/",
                     "records/items/transmutes/",
                     // Searching for unique affixes. Maybe later.
-                    "records/items/lootaffixes/prefixunique/", 
+                    "records/items/lootaffixes/prefixunique/",
                     "records/items/lootaffixes/suffixunique/",
                     "records/items/lootaffixes/completionrelics",
                     "records/items/lootaffixes/completion",
@@ -174,8 +175,15 @@ pub fn read_archive(path: &PathBuf) -> Result<(Items, Affixes), Error> {
                         Some(e) => {
                             if is_affix {
                                 affixes.insert(record_name, e);
+                            } else if let EntryType::Item(.., req) = e {
+                                if let Some((entry, ilvls)) = items.get_mut(&record_name) {
+                                    println!("doing the thing for {:?}", entry);
+                                    ilvls.push(req);
+                                } else {
+                                    items.insert(record_name, (e, Vec::new()));
+                                }
                             } else {
-                                items.insert(record_name, e);
+                                unreachable!("e is EntryType::Item if is_affix is false.");
                             }
                         }
                         None => {
@@ -194,7 +202,7 @@ pub fn read_archive(path: &PathBuf) -> Result<(Items, Affixes), Error> {
 
 // Used by the logic in parse_record(). Knowing the type of the record could be important later.
 #[derive(Debug)]
-#[allow(dead_code)] 
+#[allow(dead_code)]
 enum EntryValue {
     Float(f32),
     Text(String),
@@ -211,10 +219,16 @@ pub enum EntryType {
 pub struct AffixInfo {
     pub tag_name: Option<String>,
     pub rarity: String, // the affixes could be printed in color with this
-    pub name: Option<String>
+    pub name: Option<String>,
 }
 
-fn parse_record(record_header: &ArzRecordHeader, data: Vec<u8>, record_name: &str, strings: &[String], is_affix: bool) -> Option<EntryType> {
+fn parse_record(
+    record_header: &ArzRecordHeader,
+    data: Vec<u8>,
+    record_name: &str,
+    strings: &[String],
+    is_affix: bool,
+) -> Option<EntryType> {
     let mut reader = ByteReader::from_vec(data);
 
     let mut vals: Vec<(String, EntryValue)> = Vec::new();
@@ -237,24 +251,31 @@ fn parse_record(record_header: &ArzRecordHeader, data: Vec<u8>, record_name: &st
                 2 => {
                     let int = reader.read_u32();
                     let value = &strings[int as usize];
+                    if value == "Mythical" {
+                        println!("{record_name} {entry_key}: {value}");
+                    }
                     match entry_key.as_str() {
-                        "lootRandomizerName" | "itemNameTag" => { tag_name = Some(value.clone()); }
-                        "itemClassification" => { rarity = Some(value.clone()); }
-                        "description" => { description = Some(value.clone()); }
+                        "lootRandomizerName" | "itemNameTag" => {
+                            tag_name = Some(value.clone());
+                        }
+                        "itemClassification" => {
+                            rarity = Some(value.clone());
+                        }
+                        "description" => {
+                            description = Some(value.clone());
+                        }
                         _ => {}
                     }
                     EntryValue::Text(value.clone())
-                },
-                _ =>
-                { 
-
+                }
+                _ => {
                     let int = reader.read_u32();
                     //Seems like the "levelRequirement" field isn't useful..?
                     if entry_key.as_str() == "itemLevel" {
                         level_req = Some(int);
                     }
-                    EntryValue::Int(int) 
-                },
+                    EntryValue::Int(int)
+                }
             };
 
             // Stop reading data once we found what we came for.
@@ -271,23 +292,34 @@ fn parse_record(record_header: &ArzRecordHeader, data: Vec<u8>, record_name: &st
             vals.push((entry_key.clone(), entry_value));
         }
     }
+    //if Some("tagGDX2ShoulderC203".to_string()) == tag_name {
+    //    println!("Baldir's Mantle!");
+    //    println!("{}", record_name);
+    //    for (key, val) in vals {
+    //        println!("{key}: {:?}", val);
+    //    }
+    //    println!("-----------");
+    //}
     let rarity = rarity.unwrap_or_default();
     if is_affix {
         if tag_name.is_none() {
             //println!("Nothing found for: {:?}", record_name);
             //println!("{:?}", vals);
         }
-        let ai = AffixInfo { tag_name, rarity, name: None };
+        let ai = AffixInfo {
+            tag_name,
+            rarity,
+            name: None,
+        };
         Some(EntryType::Affix(ai))
     } else {
         //println!("{}, {record_name} {:?}", record.header.record_type, tag_name);
-        #[allow(clippy::manual_map)]
         if let Some(name) = tag_name {
-            return Some(EntryType::Item(record_name.to_string(), name.clone(), rarity, level_req))
+            return Some(EntryType::Item(record_name.to_string(), name.clone(), rarity, level_req));
         } else if let Some(desc) = description {
             if !desc.is_empty() {
                 //println!("No tag but had description: {}, {record_name} {:?}", record_header.record_type, tag_name);
-                return Some(EntryType::Item(record_name.to_string(), desc.clone(), rarity, level_req))
+                return Some(EntryType::Item(record_name.to_string(), desc.clone(), rarity, level_req));
             } else {
                 println!("Empty tag and description: {}, {record_name} {:?}", record_header.record_type, tag_name);
             }
