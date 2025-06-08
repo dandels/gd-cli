@@ -103,7 +103,13 @@ impl Display for CompleteItem {
         let suffix_colored = color_affix_by_rarity(self.suffix.clone().unwrap_or("".to_string()), &self.suffix_rarity);
         let prefix_colored = color_affix_by_rarity(self.prefix.clone().unwrap_or("".to_string()), &self.prefix_rarity);
         if self.prefix.is_none() {
-            write!(f, "{lvl_req} {quantity}{name_colored} {suffix_colored}")
+            if self.suffix.is_none() {
+                write!(f, "{lvl_req} {quantity}{name_colored}")
+            } else {
+                write!(f, "{lvl_req} {quantity}{name_colored} {suffix_colored}")
+            }
+        } else if self.suffix.is_none() {
+            write!(f, "{lvl_req} {prefix_colored} {name_colored}")
         } else {
             write!(f, "{lvl_req} {prefix_colored} {name_colored} {suffix_colored}")
         }

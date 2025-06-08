@@ -85,17 +85,31 @@ impl Decrypt {
     }
 
     pub fn read_wide_string(&mut self) -> Result<String, Error> {
-        let len = self.read_int() * 2;
-        if len > 0 {
-            let mut str_buf = self.slice_reader.read_n_bytes(len);
+        let len_u16 = self.read_int();
+        if len_u16 > 0 {
+            let len_u8 = len_u16 * 2;
+            let mut str_buf = self.slice_reader.read_n_bytes(len_u8);
 
-            for i in 0..len {
+            for i in 0..len_u8 {
                 let byte = (str_buf[i as usize] as u32 ^ self.key) as u8;
                 self.key ^= self.table[str_buf[i as usize] as usize];
                 str_buf[i as usize] = byte;
             }
+
+            let mut wstr_buf: Vec<u16> = vec![0; len_u16 as usize];
+
+            // Gritty manual way to convert Vec<u8> to Vec<u16>. Luckily we only do this once per character name.
+            let mut k = 0;
+            while k < len_u16 as usize {
+                let j = k*2;
+                let mut wchar: u16 = str_buf[j] as u16;
+                wchar |= (str_buf[j + 1] as u16) << 8;
+                wstr_buf[k] = wchar;
+                k += 1;
+            }
+
             // TODO error handling for invalid strings
-            let ret_str = String::from_utf8(str_buf).unwrap();
+            let ret_str = String::from_utf16(&wstr_buf).unwrap();
             return Ok(ret_str);
         }
         Ok("".to_string())
