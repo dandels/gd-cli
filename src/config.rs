@@ -65,16 +65,15 @@ impl Config {
         ret
     }
 
-    pub fn get_stash_files(&self) -> Vec<PathBuf> {
+    pub fn get_stash_files(&self) -> (Option<PathBuf>, Option<PathBuf>) {
         if self.save_dir().is_none() {
-            return Vec::new();
+            return (None, None);
         }
         let save_dir = self.save_dir().unwrap();
-        let paths = [
-            save_dir.join("transfer.gst"), // softcore
-            save_dir.join("transfer.gsh"), // hardcore
-        ];
-        return_valid_paths(&paths)
+        let softcore_stash = save_dir.join("transfer.gst");
+        let hardcore_stash = save_dir.join("transfer.gsh");
+
+        (softcore_stash.exists().then(|| softcore_stash), hardcore_stash.exists().then(|| hardcore_stash))
     }
 
     pub fn get_databases(&self) -> Vec<PathBuf> {

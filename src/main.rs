@@ -144,15 +144,35 @@ fn main() -> Result<(), Error> {
     // receiver.recv() all of these to make sure the threads finish
     let mut search_receivers = Vec::new();
 
-    for stash_path in config.get_stash_files() {
+    let (softcore_stash_path, hardcore_stash_path) = config.get_stash_files();
+    {
         let (tx, rx) = mpsc::channel();
         search_receivers.push(rx);
         let lookup = lookup.clone();
         thread::spawn(move || {
-            let stash = Stash::new(&stash_path).unwrap();
-            for (i, tab) in stash.tabs.iter().enumerate() {
-                for inventory_item in tab {
-                    lookup.check_item(inventory_item, &format!("Shared stash tab {}", i + 1));
+            if let Some(path) = softcore_stash_path {
+                let softcore_stash = Stash::new(&path).unwrap();
+                for (i, tab) in softcore_stash.tabs.iter().enumerate() {
+                    for inventory_item in tab {
+                        lookup.check_item(inventory_item, &format!("Softcore stash tab {}", i + 1));
+                    }
+                }
+            }
+            tx.send(true).unwrap();
+        });
+    }
+
+    {
+        let (tx, rx) = mpsc::channel();
+        search_receivers.push(rx);
+        let lookup = lookup.clone();
+        thread::spawn(move || {
+            if let Some(path) = hardcore_stash_path {
+                let hardcore_stash = Stash::new(&path).unwrap();
+                for (i, tab) in hardcore_stash.tabs.iter().enumerate() {
+                    for inventory_item in tab {
+                        lookup.check_item(inventory_item, &format!("Hardcore stash tab {}", i + 1));
+                    }
                 }
             }
             tx.send(true).unwrap();
@@ -166,47 +186,33 @@ fn main() -> Result<(), Error> {
         thread::spawn(move || {
             for (i, bag) in char_items.inventory.bags.iter().enumerate() {
                 for inventory_item in &bag.items {
-                    lookup.check_item(
-                        inventory_item,
-                        &format!("{} bag {}", char_items.name, i + 1),
-                    );
+                    lookup.check_item(inventory_item, &format!("{} bag {}", char_items.name, i + 1));
                 }
             }
 
             for (i, tab) in char_items.stash.tabs.iter().enumerate() {
                 for inventory_item in tab {
-                    lookup.check_item(
-                        inventory_item,
-                        &format!("{} stash tab {}", char_items.name, i + 1),
-                    );
+                    lookup.check_item(inventory_item, &format!("{} stash tab {}", char_items.name, i + 1));
                 }
             }
 
             for inventory_item in char_items.inventory.equipment.iter() {
-                lookup.check_item(
-                    &inventory_item.item,
-                    &format!("Equipped by {}", char_items.name),
-                );
+                lookup.check_item(&inventory_item.item, &format!("Equipped by {}", char_items.name));
             }
 
             for inventory_item in char_items.inventory.weapon_set_1.iter() {
-                lookup.check_item(
-                    &inventory_item.item,
-                    &format!("Equipped by {}, weapon set 1", char_items.name),
-                );
+                lookup.check_item(&inventory_item.item, &format!("Equipped by {}, weapon set 1", char_items.name));
             }
 
             for inventory_item in char_items.inventory.weapon_set_2.iter() {
-                lookup.check_item(
-                    &inventory_item.item,
-                    &format!("Equipped by {}, weapon set 2", char_items.name),
-                );
+                lookup.check_item(&inventory_item.item, &format!("Equipped by {}, weapon set 2", char_items.name));
             }
 
             tx.send(true).unwrap();
         });
     }
 
+    // This makes sure all threads finish
     for rx in search_receivers {
         let _ = rx.recv().unwrap();
     }
